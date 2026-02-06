@@ -1,0 +1,17 @@
+# ML
+faster-whisper>=1.1.0
+pyannote.audio>=3.3.0
+# torch и torchaudio устанавливать отдельно с CUDA:
+# pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124
+
+# Аудио
+imageio-ffmpeg>=0.5.1
+
+# GUI
+customtkinter>=5.2.0
+
+# GPU
+pynvml>=11.5.0
+
+# Модели
+huggingface-hub>=0.20.0

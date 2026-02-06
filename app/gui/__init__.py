@@ -1,0 +1,1 @@
+"""GUI модуль — CustomTkinter интерфейс."""
