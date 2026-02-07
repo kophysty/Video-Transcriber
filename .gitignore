@@ -1,51 +1,29 @@
+# Models (large files)
+models/whisper/*
+models/pyannote/*
+!models/whisper/.gitkeep
+!models/pyannote/.gitkeep
+
 # Python
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-
-# Virtual Environment
-.venv/
 venv/
-ENV/
+.venv/
+env/
+.env
+
+# Config with user data
+config.json
 
 # IDE
-.idea/
 .vscode/
+.idea/
 *.swp
 *.swo
 
-# Models (large files, download separately)
-models/whisper/
-models/pyannote/
-
-# User config
-config.json
-
-# Temp files
+# Temp
 *.wav
 *.tmp
-temp/
-
-# Logs
-*.log
-
-# OS
-.DS_Store
-Thumbs.db

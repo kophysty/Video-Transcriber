@@ -3,7 +3,10 @@
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Callable
+from typing import Optional, Callable, Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.analysis.analyzer import AnalysisResult
 
 from app.utils.config import AppConfig
 from app.utils.ffmpeg_finder import get_audio_duration
@@ -17,7 +20,7 @@ from app.models.gpu_detector import GPUInfo
 @dataclass
 class PipelineProgress:
     """Прогресс пайплайна."""
-    stage: str  # "extract", "transcribe", "diarize", "export"
+    stage: str  # "extract", "transcribe", "diarize", "export", "analyze"
     stage_progress: float  # 0.0 - 1.0
     total_progress: float  # 0.0 - 1.0
     message: str
@@ -28,9 +31,10 @@ class PipelineResult:
     """Результат работы пайплайна."""
     transcription: TranscriptionResult
     diarization: Optional[DiarizationResult]
-    input_path: Path
-    output_dir: Path
-    duration: float
+    analysis: Optional["AnalysisResult"] = None
+    input_path: Path = None
+    output_dir: Path = None
+    duration: float = 0.0
 
 
 class CancelledException(Exception):
@@ -44,16 +48,18 @@ class TranscriptionPipeline:
 
     Этапы:
     1. Извлечение аудио (10%)
-    2. Транскрибация (60%)
-    3. Диаризация (20%, опционально)
-    4. Экспорт (10%)
+    2. Транскрибация (50%)
+    3. Диаризация (15%, опционально)
+    4. AI-анализ (15%, опционально)
+    5. Экспорт (10%)
     """
 
     # Веса этапов для общего прогресса
     STAGE_WEIGHTS = {
         "extract": 0.10,
-        "transcribe": 0.60,
-        "diarize": 0.20,
+        "transcribe": 0.50,
+        "diarize": 0.15,
+        "analyze": 0.15,
         "export": 0.10,
     }
 
@@ -133,13 +139,20 @@ class TranscriptionPipeline:
                 transcription, diarization
             )
 
-            # 5. Экспорт
+            # 5. AI-анализ (опционально)
+            analysis = None
+            if self.config.enable_ai_analysis and self.config.anthropic_api_key:
+                self._check_cancelled()
+                analysis = self._analyze(transcription)
+
+            # 6. Экспорт
             self._check_cancelled()
-            self._export(transcription, diarization, input_path, output_dir)
+            self._export(transcription, diarization, analysis, input_path, output_dir)
 
             return PipelineResult(
                 transcription=transcription,
                 diarization=diarization,
+                analysis=analysis,
                 input_path=input_path,
                 output_dir=output_dir,
                 duration=duration,
@@ -204,10 +217,24 @@ class TranscriptionPipeline:
 
         return diarizer.diarize(audio_path)
 
+    def _analyze(self, transcription: TranscriptionResult):
+        """Выполнить AI-анализ."""
+        self._set_stage("analyze")
+
+        from app.analysis.analyzer import TranscriptAnalyzer
+
+        analyzer = TranscriptAnalyzer(
+            api_key=self.config.anthropic_api_key,
+            progress_callback=self._make_stage_callback(),
+        )
+
+        return analyzer.analyze(transcription)
+
     def _export(
         self,
         transcription: TranscriptionResult,
         diarization: Optional[DiarizationResult],
+        analysis,  # Optional[AnalysisResult]
         input_path: Path,
         output_dir: Path,
     ) -> None:
@@ -241,7 +268,15 @@ class TranscriptionPipeline:
 
         # TXT
         export_txt(transcription, output_dir / f"{base_name}.txt")
-        self._report_progress(1.0, "Экспорт завершён")
+        self._report_progress(0.8, "TXT экспортирован")
+
+        # AI Analysis (если есть)
+        if analysis:
+            from app.analysis.analyzer import export_analysis
+            export_analysis(analysis, output_dir, base_name)
+            self._report_progress(1.0, "Анализ экспортирован")
+        else:
+            self._report_progress(1.0, "Экспорт завершён")
 
     def _set_stage(self, stage: str) -> None:
         """Установить текущий этап."""
@@ -254,6 +289,9 @@ class TranscriptionPipeline:
                 break
             # Пропускаем диаризацию если выключена
             if s == "diarize" and not self.config.enable_diarization:
+                continue
+            # Пропускаем анализ если выключен
+            if s == "analyze" and not (self.config.enable_ai_analysis and self.config.anthropic_api_key):
                 continue
             offset += weight
 
@@ -273,11 +311,16 @@ class TranscriptionPipeline:
         # Вычисляем общий прогресс
         stage_weight = self.STAGE_WEIGHTS.get(self._current_stage, 0.0)
 
-        # Корректируем веса если диаризация выключена
+        # Корректируем веса для пропущенных этапов
+        skipped_weight = 0.0
         if not self.config.enable_diarization:
-            # Перераспределяем вес диаризации на транскрибацию
-            if self._current_stage == "transcribe":
-                stage_weight += self.STAGE_WEIGHTS["diarize"]
+            skipped_weight += self.STAGE_WEIGHTS["diarize"]
+        if not (self.config.enable_ai_analysis and self.config.anthropic_api_key):
+            skipped_weight += self.STAGE_WEIGHTS["analyze"]
+
+        # Перераспределяем на транскрибацию
+        if self._current_stage == "transcribe":
+            stage_weight += skipped_weight
 
         total_progress = self._stage_offset + (stage_progress * stage_weight)
 

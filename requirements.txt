@@ -15,3 +15,6 @@ pynvml>=11.5.0
 
 # Модели
 huggingface-hub>=0.20.0
+
+# AI Analysis (опционально)
+anthropic>=0.40.0

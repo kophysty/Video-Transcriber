@@ -204,6 +204,30 @@ class MainWindow(ctk.CTk):
         )
         self.diarization_check.pack(side="left")
 
+        # AI-анализ
+        ai_frame = ctk.CTkFrame(parent, fg_color="transparent")
+        ai_frame.pack(fill="x", pady=(0, 10))
+
+        self.ai_analysis_var = ctk.BooleanVar(value=self.config.enable_ai_analysis)
+        self.ai_analysis_check = ctk.CTkCheckBox(
+            ai_frame,
+            text="AI-анализ (саммари, ключевые моменты)",
+            variable=self.ai_analysis_var,
+            command=self._on_ai_analysis_toggle,
+        )
+        self.ai_analysis_check.pack(side="left")
+
+        self.api_key_btn = ctk.CTkButton(
+            ai_frame,
+            text="API ключ",
+            width=80,
+            command=self._open_api_key_dialog,
+        )
+        self.api_key_btn.pack(side="left", padx=(10, 0))
+
+        # Обновляем состояние чекбокса AI-анализа
+        self._update_ai_analysis_state()
+
     def _create_gpu_section(self, parent: ctk.CTkFrame) -> None:
         """Секция информации о GPU."""
         frame = ctk.CTkFrame(parent, fg_color="transparent")
@@ -410,14 +434,23 @@ class MainWindow(ctk.CTk):
         from app.utils.formats import format_duration
         duration_str = format_duration(result.duration)
 
-        messagebox.showinfo(
-            "Готово",
+        # Формируем сообщение
+        message = (
             f"Транскрибация завершена!\n\n"
             f"Длительность: {duration_str}\n"
             f"Сегментов: {len(result.transcription.segments)}\n"
-            f"Язык: {result.transcription.info.language}\n\n"
-            f"Результаты сохранены в:\n{result.output_dir}"
+            f"Язык: {result.transcription.info.language}\n"
         )
+
+        # Добавляем инфо об AI-анализе если был
+        if result.analysis:
+            message += f"\nAI-анализ: выполнен\n"
+            if result.analysis.summary.one_liner:
+                message += f"\n{result.analysis.summary.one_liner}\n"
+
+        message += f"\nРезультаты сохранены в:\n{result.output_dir}"
+
+        messagebox.showinfo("Готово", message)
 
         self.status_label.configure(text="Готово!")
 
@@ -455,6 +488,7 @@ class MainWindow(ctk.CTk):
             self.model_dropdown.configure(state="disabled")
             self.lang_dropdown.configure(state="disabled")
             self.diarization_check.configure(state="disabled")
+            self.ai_analysis_check.configure(state="disabled")
         else:
             self.cancel_btn.pack_forget()
             self.start_btn.pack(fill="x")
@@ -465,6 +499,7 @@ class MainWindow(ctk.CTk):
             self.model_dropdown.configure(state="normal")
             self.lang_dropdown.configure(state="normal")
             self.diarization_check.configure(state="normal")
+            self.ai_analysis_check.configure(state="normal")
 
     def _load_settings(self) -> None:
         """Загрузить сохранённые настройки."""
@@ -483,6 +518,10 @@ class MainWindow(ctk.CTk):
         # Диаризация
         self.diarization_var.set(self.config.enable_diarization)
 
+        # AI-анализ
+        self.ai_analysis_var.set(self.config.enable_ai_analysis)
+        self._update_ai_analysis_state()
+
         # Последние пути
         if self.config.last_output_dir:
             self.output_entry.insert(0, self.config.last_output_dir)
@@ -493,6 +532,7 @@ class MainWindow(ctk.CTk):
         self.config.whisper_model = self.model_var.get()
         self.config.language = LANGUAGES.get(self.lang_var.get(), "auto")
         self.config.enable_diarization = self.diarization_var.get()
+        self.config.enable_ai_analysis = self.ai_analysis_var.get()
         self.config.save()
 
         # Отменяем обработку если идёт
@@ -500,3 +540,35 @@ class MainWindow(ctk.CTk):
             self._pipeline.cancel()
 
         self.destroy()
+
+    def _on_ai_analysis_toggle(self) -> None:
+        """Обработчик переключения AI-анализа."""
+        if self.ai_analysis_var.get() and not self.config.anthropic_api_key:
+            # Если включаем без ключа — открываем диалог
+            self._open_api_key_dialog()
+            if not self.config.anthropic_api_key:
+                # Если ключ не ввели — выключаем обратно
+                self.ai_analysis_var.set(False)
+
+    def _open_api_key_dialog(self) -> None:
+        """Открыть диалог ввода API ключа."""
+        from app.gui.dialogs import ApiKeyDialog
+
+        dialog = ApiKeyDialog(self, self.config)
+        dialog.grab_set()
+        self.wait_window(dialog)
+
+        self._update_ai_analysis_state()
+
+    def _update_ai_analysis_state(self) -> None:
+        """Обновить состояние чекбокса AI-анализа."""
+        has_key = bool(self.config.anthropic_api_key)
+
+        if has_key:
+            self.api_key_btn.configure(text="API ключ", fg_color=["#3B8ED0", "#1F6AA5"])
+        else:
+            self.api_key_btn.configure(text="API ключ", fg_color="gray")
+
+        # Если нет ключа — выключаем чекбокс
+        if not has_key:
+            self.ai_analysis_var.set(False)

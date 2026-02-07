@@ -26,6 +26,10 @@ class AppConfig:
     # HuggingFace
     hf_token: str = ""
 
+    # AI Analysis
+    enable_ai_analysis: bool = False
+    anthropic_api_key: str = ""
+
     # UI
     theme: str = "dark"
 

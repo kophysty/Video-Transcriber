@@ -264,3 +264,113 @@ class ModelManagerDialog(ctk.CTkToplevel):
                 self._refresh_lists()
             except Exception as e:
                 messagebox.showerror("Ошибка", f"Ошибка удаления:\n\n{e}")
+
+
+class ApiKeyDialog(ctk.CTkToplevel):
+    """Диалог ввода Anthropic API ключа."""
+
+    def __init__(self, parent, config: AppConfig):
+        super().__init__(parent)
+
+        self.config = config
+
+        # Настройка окна
+        self.title("API ключ Claude")
+        self.geometry("450x200")
+        self.resizable(False, False)
+
+        # Создаём интерфейс
+        self._create_widgets()
+
+        # Центрируем относительно родителя
+        self.transient(parent)
+        self.update_idletasks()
+
+        x = parent.winfo_x() + (parent.winfo_width() - self.winfo_width()) // 2
+        y = parent.winfo_y() + (parent.winfo_height() - self.winfo_height()) // 2
+        self.geometry(f"+{x}+{y}")
+
+    def _create_widgets(self) -> None:
+        """Создать виджеты."""
+        main_frame = ctk.CTkFrame(self, fg_color="transparent")
+        main_frame.pack(fill="both", expand=True, padx=20, pady=20)
+
+        # Описание
+        ctk.CTkLabel(
+            main_frame,
+            text="Введите API ключ Anthropic для AI-анализа",
+            font=("", 12),
+        ).pack(anchor="w", pady=(0, 5))
+
+        ctk.CTkLabel(
+            main_frame,
+            text="Получите ключ на console.anthropic.com",
+            font=("", 10),
+            text_color="gray",
+        ).pack(anchor="w", pady=(0, 15))
+
+        # Поле ввода
+        self.api_key_entry = ctk.CTkEntry(
+            main_frame,
+            placeholder_text="sk-ant-...",
+            show="*",
+            width=400,
+        )
+        self.api_key_entry.pack(fill="x", pady=(0, 15))
+
+        # Если ключ уже есть — показываем маскированный
+        if self.config.anthropic_api_key:
+            masked = self.config.anthropic_api_key[:10] + "..." + self.config.anthropic_api_key[-4:]
+            self.api_key_entry.insert(0, masked)
+
+        # Кнопки
+        btn_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        btn_frame.pack(fill="x")
+
+        ctk.CTkButton(
+            btn_frame,
+            text="Сохранить",
+            command=self._save,
+        ).pack(side="left", padx=(0, 10))
+
+        ctk.CTkButton(
+            btn_frame,
+            text="Удалить ключ",
+            fg_color="gray",
+            command=self._clear,
+        ).pack(side="left", padx=(0, 10))
+
+        ctk.CTkButton(
+            btn_frame,
+            text="Отмена",
+            fg_color="gray",
+            command=self.destroy,
+        ).pack(side="right")
+
+    def _save(self) -> None:
+        """Сохранить API ключ."""
+        key = self.api_key_entry.get().strip()
+
+        # Если ключ не изменился (маскированный) — просто закрываем
+        if key.startswith("sk-ant-") and "..." in key:
+            self.destroy()
+            return
+
+        # Валидация формата
+        if key and not key.startswith("sk-ant-"):
+            messagebox.showerror(
+                "Ошибка",
+                "API ключ должен начинаться с 'sk-ant-'"
+            )
+            return
+
+        self.config.anthropic_api_key = key
+        self.config.save()
+        self.destroy()
+
+    def _clear(self) -> None:
+        """Удалить API ключ."""
+        self.config.anthropic_api_key = ""
+        self.config.enable_ai_analysis = False
+        self.config.save()
+        self.destroy()
