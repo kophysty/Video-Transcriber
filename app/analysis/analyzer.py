@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, Callable, Any
+from typing import Optional, Callable
 import json
 
 from app.core.transcriber import TranscriptionResult
@@ -127,59 +127,23 @@ class AnalysisResult:
 
 
 class TranscriptAnalyzer:
-    """Анализатор транскрипций через Claude API."""
+    """Анализатор транскрипций через Claude CLI."""
 
     def __init__(
         self,
-        api_key: str,
-        model: str = "claude-sonnet-4-5-20250514",
         progress_callback: Optional[Callable[[float, str], None]] = None,
     ):
         """
         Args:
-            api_key: Anthropic API ключ
-            model: Модель Claude для анализа
             progress_callback: Callback(progress: 0.0-1.0, message: str)
         """
-        self.api_key = api_key
-        self.model = model
         self.progress_callback = progress_callback
-        self._client = None
-
-    def _get_client(self):
-        """Получить или создать клиент Anthropic."""
-        if self._client is None:
-            try:
-                from anthropic import Anthropic
-                self._client = Anthropic(api_key=self.api_key)
-            except ImportError:
-                raise ImportError(
-                    "Пакет anthropic не установлен. "
-                    "Установите: pip install anthropic"
-                )
-        return self._client
-
-    def validate_api_key(self) -> bool:
-        """Проверить валидность API ключа."""
-        if not self.api_key or not self.api_key.startswith("sk-ant-"):
-            return False
-
-        try:
-            client = self._get_client()
-            # Минимальный запрос для проверки ключа
-            client.messages.create(
-                model=self.model,
-                max_tokens=10,
-                messages=[{"role": "user", "content": "Hi"}],
-            )
-            return True
-        except Exception:
-            return False
 
     def analyze(
         self,
         transcription: TranscriptionResult,
         resolve_links: bool = True,
+        api_key: Optional[str] = None,
     ) -> AnalysisResult:
         """
         Анализировать транскрипцию.
@@ -187,10 +151,13 @@ class TranscriptAnalyzer:
         Args:
             transcription: Результат транскрибации
             resolve_links: Искать ссылки на сервисы
+            api_key: Опциональный Anthropic API ключ для web search
 
         Returns:
             AnalysisResult с саммари, хайлайтами и сущностями
         """
+        from app.analysis.claude_cli import call_claude
+
         self._report_progress(0.0, "Подготовка текста...")
 
         # Собираем текст транскрипции
@@ -199,13 +166,13 @@ class TranscriptAnalyzer:
         # Создаём саммари
         self._report_progress(0.1, "Создание саммари...")
         from app.analysis.summarizer import create_summary
-        summary = create_summary(self._get_client(), self.model, full_text)
+        summary = create_summary(call_claude, full_text)
 
         # Извлекаем ключевые моменты и сущности
         self._report_progress(0.4, "Извлечение ключевых моментов...")
         from app.analysis.entity_extractor import extract_highlights_and_entities
         highlights, entities = extract_highlights_and_entities(
-            self._get_client(), self.model, full_text, transcription
+            call_claude, full_text, transcription
         )
 
         # Ищем ссылки на сервисы
@@ -213,7 +180,7 @@ class TranscriptAnalyzer:
             self._report_progress(0.7, "Поиск ссылок...")
             from app.analysis.link_resolver import resolve_entity_links
             entities = resolve_entity_links(
-                self._get_client(), self.model, entities
+                call_claude, entities, api_key=api_key
             )
 
         self._report_progress(1.0, "Анализ завершён")

@@ -26,8 +26,8 @@ WHISPER_MODELS: dict[str, WhisperModelInfo] = {
         size_mb=6200,
         vram_fp16_mb=5000,
         vram_int8_mb=3000,
-        description_ru="Лучшее качество, большой размер",
-        description_en="Best quality, large size",
+        description_ru="Whisper Large V3 — лучшее качество распознавания, 1.5B параметров",
+        description_en="Whisper Large V3 — best recognition quality, 1.5B params",
     ),
     "large-v3-turbo": WhisperModelInfo(
         name="large-v3-turbo",
@@ -36,8 +36,8 @@ WHISPER_MODELS: dict[str, WhisperModelInfo] = {
         size_mb=3100,
         vram_fp16_mb=3000,
         vram_int8_mb=2000,
-        description_ru="Почти как large-v3, но в 8 раз быстрее",
-        description_en="Near large-v3 quality, 8x faster",
+        description_ru="Whisper Large V3 Turbo — близко к large-v3 по качеству, в 8\u00d7 быстрее",
+        description_en="Whisper Large V3 Turbo — near large-v3 quality, 8x faster",
     ),
     "medium": WhisperModelInfo(
         name="medium",
@@ -46,8 +46,8 @@ WHISPER_MODELS: dict[str, WhisperModelInfo] = {
         size_mb=3100,
         vram_fp16_mb=2500,
         vram_int8_mb=1500,
-        description_ru="Хороший баланс скорости и качества",
-        description_en="Good balance of speed and quality",
+        description_ru="Whisper Medium — баланс скорости и качества, 769M параметров",
+        description_en="Whisper Medium — speed/quality balance, 769M params",
     ),
     "small": WhisperModelInfo(
         name="small",
@@ -56,8 +56,8 @@ WHISPER_MODELS: dict[str, WhisperModelInfo] = {
         size_mb=970,
         vram_fp16_mb=1000,
         vram_int8_mb=700,
-        description_ru="Быстрый, среднее качество",
-        description_en="Fast, moderate quality",
+        description_ru="Whisper Small — быстрый, хорош для чистого аудио",
+        description_en="Whisper Small — fast, good for clean audio",
     ),
     "base": WhisperModelInfo(
         name="base",
@@ -66,8 +66,8 @@ WHISPER_MODELS: dict[str, WhisperModelInfo] = {
         size_mb=290,
         vram_fp16_mb=500,
         vram_int8_mb=300,
-        description_ru="Очень быстрый, базовое качество",
-        description_en="Very fast, basic quality",
+        description_ru="Whisper Base — очень быстрый, подходит для простых записей",
+        description_en="Whisper Base — very fast, suitable for simple recordings",
     ),
     "tiny": WhisperModelInfo(
         name="tiny",
@@ -76,8 +76,8 @@ WHISPER_MODELS: dict[str, WhisperModelInfo] = {
         size_mb=150,
         vram_fp16_mb=300,
         vram_int8_mb=200,
-        description_ru="Самый быстрый, минимальное качество",
-        description_en="Fastest, lowest quality",
+        description_ru="Whisper Tiny — мгновенный, минимальное качество",
+        description_en="Whisper Tiny — instant, minimal quality",
     ),
 }
 

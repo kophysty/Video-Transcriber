@@ -1,7 +1,7 @@
 """Создание иерархического саммари транскрипции."""
 
 import json
-from typing import Any
+from typing import Callable
 
 from app.analysis.analyzer import Summary
 
@@ -12,13 +12,12 @@ MAX_CHUNK_TOKENS = 40000
 CHARS_PER_TOKEN = 3
 
 
-def create_summary(client: Any, model: str, transcript_text: str) -> Summary:
+def create_summary(call_fn: Callable[[str], str], transcript_text: str) -> Summary:
     """
     Создать иерархическое саммари транскрипции.
 
     Args:
-        client: Anthropic клиент
-        model: Модель Claude
+        call_fn: Функция вызова LLM (prompt -> response text)
         transcript_text: Текст транскрипции с таймстампами
 
     Returns:
@@ -29,13 +28,13 @@ def create_summary(client: Any, model: str, transcript_text: str) -> Summary:
 
     if estimated_tokens > MAX_CHUNK_TOKENS:
         # Длинный транскрипт — используем chunking
-        return _create_summary_chunked(client, model, transcript_text)
+        return _create_summary_chunked(call_fn, transcript_text)
     else:
         # Короткий — анализируем целиком
-        return _create_summary_direct(client, model, transcript_text)
+        return _create_summary_direct(call_fn, transcript_text)
 
 
-def _create_summary_direct(client: Any, model: str, transcript_text: str) -> Summary:
+def _create_summary_direct(call_fn: Callable[[str], str], transcript_text: str) -> Summary:
     """Создать саммари для короткого транскрипта."""
     prompt = f"""Проанализируй эту транскрипцию и создай структурированное саммари.
 
@@ -51,16 +50,11 @@ def _create_summary_direct(client: Any, model: str, transcript_text: str) -> Sum
 
 Отвечай ТОЛЬКО валидным JSON без дополнительного текста."""
 
-    response = client.messages.create(
-        model=model,
-        max_tokens=2000,
-        messages=[{"role": "user", "content": prompt}],
-    )
-
-    return _parse_summary_response(response.content[0].text)
+    response = call_fn(prompt)
+    return _parse_summary_response(response)
 
 
-def _create_summary_chunked(client: Any, model: str, transcript_text: str) -> Summary:
+def _create_summary_chunked(call_fn: Callable[[str], str], transcript_text: str) -> Summary:
     """Создать саммари для длинного транскрипта через chunking."""
     # Разбиваем на чанки
     chunks = _split_into_chunks(transcript_text)
@@ -76,12 +70,8 @@ def _create_summary_chunked(client: Any, model: str, transcript_text: str) -> Su
 Кратко опиши основные темы и ключевые моменты этого фрагмента (2-3 абзаца).
 Сохраняй упоминания таймстампов для важных моментов."""
 
-        response = client.messages.create(
-            model=model,
-            max_tokens=1000,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        chunk_summaries.append(response.content[0].text)
+        response = call_fn(prompt)
+        chunk_summaries.append(response)
 
     # Синтезируем финальное саммари
     combined = "\n\n---\n\n".join([
@@ -103,13 +93,8 @@ def _create_summary_chunked(client: Any, model: str, transcript_text: str) -> Su
 
 Объедини информацию логично, избегай повторений. Отвечай ТОЛЬКО валидным JSON."""
 
-    response = client.messages.create(
-        model=model,
-        max_tokens=2000,
-        messages=[{"role": "user", "content": synthesis_prompt}],
-    )
-
-    return _parse_summary_response(response.content[0].text)
+    response = call_fn(synthesis_prompt)
+    return _parse_summary_response(response)
 
 
 def _split_into_chunks(text: str) -> list[str]:

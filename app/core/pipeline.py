@@ -141,7 +141,7 @@ class TranscriptionPipeline:
 
             # 5. AI-анализ (опционально)
             analysis = None
-            if self.config.enable_ai_analysis and self.config.anthropic_api_key:
+            if self.config.enable_ai_analysis:
                 self._check_cancelled()
                 analysis = self._analyze(transcription)
 
@@ -224,11 +224,13 @@ class TranscriptionPipeline:
         from app.analysis.analyzer import TranscriptAnalyzer
 
         analyzer = TranscriptAnalyzer(
-            api_key=self.config.anthropic_api_key,
             progress_callback=self._make_stage_callback(),
         )
 
-        return analyzer.analyze(transcription)
+        return analyzer.analyze(
+            transcription,
+            api_key=self.config.anthropic_api_key or None,
+        )
 
     def _export(
         self,
@@ -291,7 +293,7 @@ class TranscriptionPipeline:
             if s == "diarize" and not self.config.enable_diarization:
                 continue
             # Пропускаем анализ если выключен
-            if s == "analyze" and not (self.config.enable_ai_analysis and self.config.anthropic_api_key):
+            if s == "analyze" and not self.config.enable_ai_analysis:
                 continue
             offset += weight
 
@@ -316,7 +318,7 @@ class TranscriptionPipeline:
         for s, w in self.STAGE_WEIGHTS.items():
             if s == "diarize" and not self.config.enable_diarization:
                 continue
-            if s == "analyze" and not (self.config.enable_ai_analysis and self.config.anthropic_api_key):
+            if s == "analyze" and not self.config.enable_ai_analysis:
                 continue
             active_weight += w
 

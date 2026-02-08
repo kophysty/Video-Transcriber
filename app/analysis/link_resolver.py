@@ -1,26 +1,27 @@
 """Поиск ссылок на упомянутые сервисы и компании."""
 
 import json
-from typing import Any
+from typing import Callable, Optional
 
 from app.analysis.analyzer import Entity, Entities
 
 
 def resolve_entity_links(
-    client: Any,
-    model: str,
+    call_fn: Callable[[str], str],
     entities: Entities,
+    api_key: Optional[str] = None,
 ) -> Entities:
     """
     Найти ссылки на упомянутые сервисы и компании.
 
-    Использует Claude с web_search tool для поиска актуальных URL.
-    При ошибке — фоллбэк на запрос из памяти модели.
+    Если указан api_key — используем Anthropic API с web_search для
+    поиска актуальных URL. Иначе — фоллбэк на запрос из памяти модели
+    через Claude CLI.
 
     Args:
-        client: Anthropic клиент
-        model: Модель Claude
+        call_fn: Функция вызова LLM (prompt -> response text)
         entities: Сущности для поиска ссылок
+        api_key: Опциональный Anthropic API ключ для web search
 
     Returns:
         Entities с заполненными URL
@@ -45,12 +46,19 @@ def resolve_entity_links(
     if not items_to_resolve:
         return entities
 
-    # Пробуем с web_search, при ошибке — фоллбэк
-    try:
-        url_map = _resolve_with_web_search(client, model, items_to_resolve)
-    except Exception:
+    # Пробуем web_search через API (если есть ключ), иначе фоллбэк
+    url_map = {}
+    if api_key:
         try:
-            url_map = _resolve_from_memory(client, model, items_to_resolve)
+            url_map = _resolve_with_web_search(api_key, items_to_resolve)
+        except Exception:
+            try:
+                url_map = _resolve_from_memory(call_fn, items_to_resolve)
+            except Exception:
+                return entities
+    else:
+        try:
+            url_map = _resolve_from_memory(call_fn, items_to_resolve)
         except Exception:
             return entities
 
@@ -69,11 +77,13 @@ def resolve_entity_links(
 
 
 def _resolve_with_web_search(
-    client: Any,
-    model: str,
+    api_key: str,
     items: list[dict],
 ) -> dict[str, str]:
-    """Найти URL через веб-поиск Claude."""
+    """Найти URL через веб-поиск Claude API."""
+    from anthropic import Anthropic
+
+    client = Anthropic(api_key=api_key)
     items_json = json.dumps(items, ensure_ascii=False, indent=2)
 
     prompt = (
@@ -87,7 +97,7 @@ def _resolve_with_web_search(
     )
 
     response = client.messages.create(
-        model=model,
+        model="claude-sonnet-4-5-20250514",
         max_tokens=1000,
         tools=[{"name": "web_search", "type": "web_search_20250305"}],
         messages=[{"role": "user", "content": prompt}],
@@ -102,8 +112,7 @@ def _resolve_with_web_search(
 
 
 def _resolve_from_memory(
-    client: Any,
-    model: str,
+    call_fn: Callable[[str], str],
     items: list[dict],
 ) -> dict[str, str]:
     """Фоллбэк: запросить URL из памяти модели."""
@@ -121,13 +130,8 @@ def _resolve_from_memory(
         f"- Отвечай ТОЛЬКО валидным JSON массивом"
     )
 
-    response = client.messages.create(
-        model=model,
-        max_tokens=1000,
-        messages=[{"role": "user", "content": prompt}],
-    )
-
-    return _parse_urls_to_map(response.content[0].text)
+    response = call_fn(prompt)
+    return _parse_urls_to_map(response)
 
 
 def _parse_urls_to_map(response_text: str) -> dict[str, str]:

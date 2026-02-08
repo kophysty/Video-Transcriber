@@ -1,15 +1,14 @@
 """Извлечение сущностей и ключевых моментов из транскрипции."""
 
 import json
-from typing import Any
+from typing import Callable
 
 from app.analysis.analyzer import Highlight, Entity, Entities
 from app.core.transcriber import TranscriptionResult
 
 
 def extract_highlights_and_entities(
-    client: Any,
-    model: str,
+    call_fn: Callable[[str], str],
     transcript_text: str,
     transcription: TranscriptionResult,
 ) -> tuple[list[Highlight], Entities]:
@@ -17,8 +16,7 @@ def extract_highlights_and_entities(
     Извлечь ключевые моменты и сущности из транскрипции.
 
     Args:
-        client: Anthropic клиент
-        model: Модель Claude
+        call_fn: Функция вызова LLM (prompt -> response text)
         transcript_text: Текст транскрипции с таймстампами
         transcription: Оригинальный результат транскрибации
 
@@ -68,13 +66,8 @@ def extract_highlights_and_entities(
 - Таймстампы бери из транскрипции
 - Отвечай ТОЛЬКО валидным JSON"""
 
-    response = client.messages.create(
-        model=model,
-        max_tokens=2000,
-        messages=[{"role": "user", "content": prompt}],
-    )
-
-    return _parse_extraction_response(response.content[0].text, transcription)
+    response = call_fn(prompt)
+    return _parse_extraction_response(response, transcription)
 
 
 def _parse_extraction_response(

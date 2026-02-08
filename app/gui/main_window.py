@@ -225,8 +225,8 @@ class MainWindow(ctk.CTk):
         )
         self.api_key_btn.pack(side="left", padx=(10, 0))
 
-        # Обновляем состояние чекбокса AI-анализа
-        self._update_ai_analysis_state()
+        # Обновляем вид кнопки API ключа
+        self._update_api_key_button()
 
     def _create_gpu_section(self, parent: ctk.CTkFrame) -> None:
         """Секция информации о GPU."""
@@ -534,7 +534,7 @@ class MainWindow(ctk.CTk):
 
         # AI-анализ
         self.ai_analysis_var.set(self.config.enable_ai_analysis)
-        self._update_ai_analysis_state()
+        self._update_api_key_button()
 
         # Последние пути
         if self.config.last_output_dir:
@@ -557,32 +557,34 @@ class MainWindow(ctk.CTk):
 
     def _on_ai_analysis_toggle(self) -> None:
         """Обработчик переключения AI-анализа."""
-        if self.ai_analysis_var.get() and not self.config.anthropic_api_key:
-            # Если включаем без ключа — открываем диалог
-            self._open_api_key_dialog()
-            if not self.config.anthropic_api_key:
-                # Если ключ не ввели — выключаем обратно
+        if self.ai_analysis_var.get():
+            # Проверяем доступность Claude CLI
+            from app.analysis.claude_cli import is_claude_available
+
+            if not is_claude_available():
+                messagebox.showwarning(
+                    "Claude CLI не найден",
+                    "Для AI-анализа нужен Claude Code.\n\n"
+                    "Установите: npm install -g @anthropic-ai/claude-code\n\n"
+                    "После установки перезапустите приложение."
+                )
                 self.ai_analysis_var.set(False)
 
     def _open_api_key_dialog(self) -> None:
-        """Открыть диалог ввода API ключа."""
+        """Открыть диалог ввода API ключа (опционально, для web search)."""
         from app.gui.dialogs import ApiKeyDialog
 
         dialog = ApiKeyDialog(self, self.config)
         dialog.grab_set()
         self.wait_window(dialog)
 
-        self._update_ai_analysis_state()
+        self._update_api_key_button()
 
-    def _update_ai_analysis_state(self) -> None:
-        """Обновить состояние чекбокса AI-анализа."""
+    def _update_api_key_button(self) -> None:
+        """Обновить вид кнопки API ключа."""
         has_key = bool(self.config.anthropic_api_key)
 
         if has_key:
             self.api_key_btn.configure(text="API ключ", fg_color=["#3B8ED0", "#1F6AA5"])
         else:
             self.api_key_btn.configure(text="API ключ", fg_color="gray")
-
-        # Если нет ключа — выключаем чекбокс
-        if not has_key:
-            self.ai_analysis_var.set(False)

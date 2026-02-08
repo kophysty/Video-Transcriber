@@ -26,9 +26,9 @@ class AppConfig:
     # HuggingFace
     hf_token: str = ""
 
-    # AI Analysis
+    # AI Analysis (Claude CLI — основной движок, API ключ опционально для web search)
     enable_ai_analysis: bool = False
-    anthropic_api_key: str = ""
+    anthropic_api_key: str = ""  # Опционально: для поиска ссылок через web search
 
     # UI
     theme: str = "dark"
