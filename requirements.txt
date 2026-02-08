@@ -1,8 +1,11 @@
 # ML
 faster-whisper>=1.1.0
-pyannote.audio>=3.3.0
-# torch и torchaudio устанавливать отдельно с CUDA:
+speechbrain>=1.0.0
+scipy>=1.10.0
+# ВАЖНО: torch и torchaudio устанавливать отдельно с CUDA ПЕРЕД speechbrain:
 # pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124
+# Если speechbrain перезаписал torch на CPU-версию, переустановите CUDA torch:
+# pip install torch torchaudio --force-reinstall --index-url https://download.pytorch.org/whl/cu124
 
 # Аудио
 imageio-ffmpeg>=0.5.1

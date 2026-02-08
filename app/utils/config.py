@@ -49,11 +49,6 @@ class AppConfig:
         return cls.get_models_dir() / "whisper"
 
     @classmethod
-    def get_pyannote_models_dir(cls) -> Path:
-        """Путь к папке с pyannote моделями."""
-        return cls.get_models_dir() / "pyannote"
-
-    @classmethod
     def load(cls) -> "AppConfig":
         """Загрузить конфигурацию из файла или создать дефолтную."""
         config_path = cls.get_config_path()

@@ -54,8 +54,8 @@ class MainWindow(ctk.CTk):
 
         # Настройка окна
         self.title("Video Transcriber")
-        self.geometry("600x680")
-        self.minsize(500, 620)
+        self.geometry("600x720")
+        self.minsize(500, 660)
 
         # Тема
         ctk.set_appearance_mode(self.config.theme)
@@ -198,6 +198,19 @@ class MainWindow(ctk.CTk):
         )
         self.lang_dropdown.pack(side="left")
 
+        # Транскрибация (чекбокс)
+        transcribe_frame = ctk.CTkFrame(parent, fg_color="transparent")
+        transcribe_frame.pack(fill="x", pady=(0, 10))
+
+        self.transcription_var = ctk.BooleanVar(value=True)
+        self.transcription_check = ctk.CTkCheckBox(
+            transcribe_frame,
+            text="Транскрибация (распознавание речи)",
+            variable=self.transcription_var,
+            command=self._on_transcription_toggle,
+        )
+        self.transcription_check.pack(side="left")
+
         # Диаризация
         diar_frame = ctk.CTkFrame(parent, fg_color="transparent")
         diar_frame.pack(fill="x", pady=(0, 10))
@@ -209,23 +222,6 @@ class MainWindow(ctk.CTk):
             variable=self.diarization_var,
         )
         self.diarization_check.pack(side="left")
-
-        self.hf_token_btn = ctk.CTkButton(
-            diar_frame,
-            text="HF токен",
-            width=80,
-            command=self._open_hf_token_dialog,
-        )
-        self.hf_token_btn.pack(side="left", padx=(10, 0))
-        self._update_hf_token_button()
-
-        hf_help_btn = ctk.CTkButton(
-            diar_frame,
-            text="?",
-            width=28,
-            command=self._show_hf_help,
-        )
-        hf_help_btn.pack(side="left", padx=(5, 0))
 
         # AI-анализ
         ai_frame = ctk.CTkFrame(parent, fg_color="transparent")
@@ -396,6 +392,7 @@ class MainWindow(ctk.CTk):
         input_path = self.input_entry.get().strip()
         output_dir = self.output_entry.get().strip()
         model_name = self.model_var.get()
+        skip_transcription = not self.transcription_var.get()
 
         if not input_path:
             messagebox.showerror("Ошибка", "Выберите входной файл")
@@ -413,12 +410,46 @@ class MainWindow(ctk.CTk):
             messagebox.showerror("Ошибка", "Выберите папку для результатов")
             return
 
-        if not model_name or model_name == "(нет моделей)":
-            messagebox.showerror(
-                "Ошибка",
-                "Сначала скачайте модель Whisper.\nНажмите 'Управление' для скачивания."
-            )
-            return
+        # Если транскрибация включена — нужна модель
+        if not skip_transcription:
+            if not model_name or model_name == "(нет моделей)":
+                messagebox.showerror(
+                    "Ошибка",
+                    "Сначала скачайте модель Whisper.\nНажмите 'Управление' для скачивания."
+                )
+                return
+
+        # Если транскрибация выключена — нужен существующий JSON
+        existing_transcription = None
+        if skip_transcription:
+            if not self.diarization_var.get() and not self.ai_analysis_var.get():
+                messagebox.showerror(
+                    "Ошибка",
+                    "Включите хотя бы диаризацию или AI-анализ."
+                )
+                return
+
+            # Ищем JSON в папке результатов
+            base_name = Path(input_path).stem
+            json_path = Path(output_dir) / f"{base_name}.json"
+
+            if not json_path.exists():
+                messagebox.showerror(
+                    "Ошибка",
+                    f"Файл транскрибации не найден:\n{json_path}\n\n"
+                    "Сначала выполните транскрибацию, чтобы создать JSON."
+                )
+                return
+
+            try:
+                from app.exporters.json_loader import load_transcription_from_json
+                existing_transcription = load_transcription_from_json(json_path)
+            except Exception as e:
+                messagebox.showerror(
+                    "Ошибка",
+                    f"Не удалось загрузить транскрибацию:\n{e}"
+                )
+                return
 
         # Обновляем конфиг
         self.config.whisper_model = model_name
@@ -433,12 +464,17 @@ class MainWindow(ctk.CTk):
         # Запускаем в фоновом потоке
         thread = threading.Thread(
             target=self._run_pipeline,
-            args=(Path(input_path), Path(output_dir)),
+            args=(Path(input_path), Path(output_dir), existing_transcription),
             daemon=True,
         )
         thread.start()
 
-    def _run_pipeline(self, input_path: Path, output_dir: Path) -> None:
+    def _run_pipeline(
+        self,
+        input_path: Path,
+        output_dir: Path,
+        existing_transcription=None,
+    ) -> None:
         """Запустить пайплайн (в фоновом потоке)."""
         try:
             self._pipeline = TranscriptionPipeline(
@@ -447,7 +483,10 @@ class MainWindow(ctk.CTk):
                 progress_callback=self._on_progress,
             )
 
-            result = self._pipeline.run(input_path, output_dir)
+            result = self._pipeline.run(
+                input_path, output_dir,
+                existing_transcription=existing_transcription,
+            )
 
             # Успех
             self.after(0, self._on_complete, result)
@@ -514,10 +553,10 @@ class MainWindow(ctk.CTk):
 
         # Формируем сообщение
         message = (
-            f"Транскрибация завершена!\n\n"
+            f"Обработка завершена!\n\n"
             f"Длительность: {duration_str}\n"
             f"Сегментов: {len(result.transcription.segments)}\n"
-            f"Язык: {result.transcription.info.language}\n"
+            f"Язык: {result.transcription.info.language if result.transcription.info else '?'}\n"
         )
 
         # Добавляем инфо об AI-анализе если был
@@ -573,9 +612,9 @@ class MainWindow(ctk.CTk):
             self.output_entry.configure(state="disabled")
             self.model_dropdown.configure(state="disabled")
             self.lang_dropdown.configure(state="disabled")
+            self.transcription_check.configure(state="disabled")
             self.diarization_check.configure(state="disabled")
             self.ai_analysis_check.configure(state="disabled")
-            self.hf_token_btn.configure(state="disabled")
             self.api_key_btn.configure(state="disabled")
         else:
             self.cancel_btn.pack_forget()
@@ -584,12 +623,18 @@ class MainWindow(ctk.CTk):
             # Разблокируем ввод
             self.input_entry.configure(state="normal")
             self.output_entry.configure(state="normal")
-            self.model_dropdown.configure(state="normal")
-            self.lang_dropdown.configure(state="normal")
+            self.transcription_check.configure(state="normal")
             self.diarization_check.configure(state="normal")
             self.ai_analysis_check.configure(state="normal")
-            self.hf_token_btn.configure(state="normal")
             self.api_key_btn.configure(state="normal")
+
+            # Модель/язык зависят от чекбокса транскрибации
+            if self.transcription_var.get():
+                self.model_dropdown.configure(state="normal")
+                self.lang_dropdown.configure(state="normal")
+            else:
+                self.model_dropdown.configure(state="disabled")
+                self.lang_dropdown.configure(state="disabled")
 
     def _load_settings(self) -> None:
         """Загрузить сохранённые настройки."""
@@ -607,7 +652,6 @@ class MainWindow(ctk.CTk):
 
         # Диаризация
         self.diarization_var.set(self.config.enable_diarization)
-        self._update_hf_token_button()
 
         # AI-анализ
         self.ai_analysis_var.set(self.config.enable_ai_analysis)
@@ -631,6 +675,25 @@ class MainWindow(ctk.CTk):
             self._pipeline.cancel()
 
         self.destroy()
+
+    def _on_transcription_toggle(self) -> None:
+        """Обработчик переключения транскрибации."""
+        if self.transcription_var.get():
+            self.model_dropdown.configure(state="normal")
+            self.lang_dropdown.configure(state="normal")
+            self.start_btn.configure(text="Начать транскрибацию")
+        else:
+            self.model_dropdown.configure(state="disabled")
+            self.lang_dropdown.configure(state="disabled")
+            self.start_btn.configure(text="Начать обработку")
+
+            # Предупредить если ни одна опция не выбрана
+            if not self.diarization_var.get() and not self.ai_analysis_var.get():
+                messagebox.showwarning(
+                    "Нет выбранных этапов",
+                    "Включите хотя бы диаризацию или AI-анализ,\n"
+                    "если транскрибация отключена."
+                )
 
     def _on_ai_analysis_toggle(self) -> None:
         """Обработчик переключения AI-анализа."""
@@ -657,25 +720,6 @@ class MainWindow(ctk.CTk):
 
         self._update_api_key_button()
 
-    def _open_hf_token_dialog(self) -> None:
-        """Открыть диалог ввода HuggingFace токена."""
-        from app.gui.dialogs import HfTokenDialog
-
-        dialog = HfTokenDialog(self, self.config)
-        dialog.grab_set()
-        self.wait_window(dialog)
-
-        self._update_hf_token_button()
-
-    def _update_hf_token_button(self) -> None:
-        """Обновить вид кнопки HF токена."""
-        has_token = bool(self.config.hf_token)
-
-        if has_token:
-            self.hf_token_btn.configure(text="HF токен", fg_color=["#3B8ED0", "#1F6AA5"])
-        else:
-            self.hf_token_btn.configure(text="HF токен", fg_color="gray")
-
     def _show_model_help(self) -> None:
         """Показать подсказку по выбору модели."""
         from app.gui.dialogs import HelpDialog
@@ -693,23 +737,6 @@ class MainWindow(ctk.CTk):
                 ("medium (1.5 GB) — баланс скорости и качества, VRAM 2.5+ GB", None),
                 ("small (500 MB) — быстрая, хороша для чистого аудио, VRAM 1+ GB", None),
                 ("base / tiny — мгновенные, минимальное качество, любая видеокарта", None),
-            ],
-        )
-
-    def _show_hf_help(self) -> None:
-        """Показать инструкцию по HuggingFace токену."""
-        from app.gui.dialogs import HelpDialog
-
-        HelpDialog(
-            self,
-            title="HuggingFace токен — инструкция",
-            steps=[
-                ("Зарегистрируйтесь на HuggingFace", "https://huggingface.co/join"),
-                ("Создайте токен (тип Read)", "https://huggingface.co/settings/tokens"),
-                ("Примите лицензию: speaker-diarization-3.1", "https://huggingface.co/pyannote/speaker-diarization-3.1"),
-                ("Примите лицензию: segmentation-3.0", "https://huggingface.co/pyannote/segmentation-3.0"),
-                ("Примите лицензию: speaker-diarization-community-1", "https://huggingface.co/pyannote/speaker-diarization-community-1"),
-                ("Вставьте токен по кнопке «HF токен»", None),
             ],
         )
 

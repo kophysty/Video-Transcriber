@@ -84,6 +84,7 @@ class TranscriptionPipeline:
         self._current_stage = ""
         self._stage_offset = 0.0
         self._start_time = 0.0
+        self._skip_transcription = False
 
     def cancel(self) -> None:
         """Отменить выполнение."""
@@ -93,51 +94,82 @@ class TranscriptionPipeline:
         self,
         input_path: Path,
         output_dir: Path,
+        existing_transcription: Optional['TranscriptionResult'] = None,
     ) -> PipelineResult:
-        """Запустить полный пайплайн."""
+        """
+        Запустить пайплайн.
+
+        Args:
+            input_path: Путь к входному файлу
+            output_dir: Папка для результатов
+            existing_transcription: Если передан — пропускаем транскрибацию,
+                                    используем существующий результат
+        """
         self._cancel_event.clear()
         self._start_time = time.monotonic()
         output_dir.mkdir(parents=True, exist_ok=True)
         warnings: list[str] = []
+        skip_transcription = existing_transcription is not None
+        self._skip_transcription = skip_transcription
 
         log.info("=" * 60)
         log.info("Начало обработки: %s", input_path.name)
         log.info("Выходная папка: %s", output_dir)
-        log.info("Модель: %s, устройство: %s, compute: %s",
-                 self.config.whisper_model, self.config.device, self.config.compute_type)
+        if skip_transcription:
+            log.info("Режим: повторная обработка (транскрибация пропущена)")
+        else:
+            log.info("Модель: %s, устройство: %s, compute: %s",
+                     self.config.whisper_model, self.config.device, self.config.compute_type)
         log.info("Диаризация: %s, AI-анализ: %s",
                  self.config.enable_diarization, self.config.enable_ai_analysis)
         log.info("=" * 60)
 
-        # 1. Извлечение аудио
-        self._check_cancelled()
-        log.info("[1/5] Извлечение аудио...")
-        audio_path = self._extract_audio(input_path, output_dir)
-        log.info("[1/5] Аудио готово: %s", audio_path.name)
+        audio_path = input_path  # для диаризации нужен аудио файл
+
+        if skip_transcription:
+            # Используем существующую транскрибацию
+            transcription = existing_transcription
+            duration = transcription.info.duration if transcription.info else 0.0
+            log.info("Загружена транскрибация: %d сегментов, %.1f мин",
+                     len(transcription.segments), duration / 60)
+
+            # Для диаризации нужен аудио файл — извлекаем если надо
+            if self.config.enable_diarization:
+                self._check_cancelled()
+                log.info("[1] Извлечение аудио для диаризации...")
+                audio_path = self._extract_audio(input_path, output_dir)
+                log.info("[1] Аудио готово: %s", audio_path.name)
+        else:
+            # 1. Извлечение аудио
+            self._check_cancelled()
+            log.info("[1/5] Извлечение аудио...")
+            audio_path = self._extract_audio(input_path, output_dir)
+            log.info("[1/5] Аудио готово: %s", audio_path.name)
 
         try:
-            # Получаем длительность
-            duration = get_audio_duration(audio_path) or 0.0
-            if duration > 0:
-                log.info("Длительность аудио (ffprobe): %.1f сек (%.1f мин)", duration, duration / 60)
-            else:
-                log.warning("ffprobe не определил длительность, будет использована из faster-whisper")
+            if not skip_transcription:
+                # Получаем длительность
+                duration = get_audio_duration(audio_path) or 0.0
+                if duration > 0:
+                    log.info("Длительность аудио (ffprobe): %.1f сек (%.1f мин)", duration, duration / 60)
+                else:
+                    log.warning("ffprobe не определил длительность, будет использована из faster-whisper")
 
-            # 2. Транскрибация
-            self._check_cancelled()
-            log.info("[2/5] Транскрибация...")
-            t0 = time.monotonic()
-            transcription, transcriber = self._transcribe(audio_path, duration)
-            t_transcribe = time.monotonic() - t0
+                # 2. Транскрибация
+                self._check_cancelled()
+                log.info("[2/5] Транскрибация...")
+                t0 = time.monotonic()
+                transcription, transcriber = self._transcribe(audio_path, duration)
+                t_transcribe = time.monotonic() - t0
 
-            # Используем длительность из faster-whisper если ffprobe не сработал
-            if duration <= 0 and transcription.info:
-                duration = transcription.info.duration
-                log.info("Длительность из faster-whisper: %.1f сек (%.1f мин)", duration, duration / 60)
+                # Используем длительность из faster-whisper если ffprobe не сработал
+                if duration <= 0 and transcription.info:
+                    duration = transcription.info.duration
+                    log.info("Длительность из faster-whisper: %.1f сек (%.1f мин)", duration, duration / 60)
 
-            log.info("[2/5] Транскрибация завершена за %.1f сек, сегментов: %d, язык: %s",
-                     t_transcribe, len(transcription.segments),
-                     transcription.info.language if transcription.info else "?")
+                log.info("[2/5] Транскрибация завершена за %.1f сек, сегментов: %d, язык: %s",
+                         t_transcribe, len(transcription.segments),
+                         transcription.info.language if transcription.info else "?")
 
             # 3. Диаризация (опционально, с graceful fallback)
             diarization = None
@@ -145,9 +177,9 @@ class TranscriptionPipeline:
                 self._check_cancelled()
                 log.info("[3/5] Диаризация спикеров...")
 
-                # Управление VRAM: выгружаем Whisper перед pyannote
-                if self.gpu_info and self.gpu_info.vram_total_mb < 16000:
-                    log.info("VRAM < 16 GB, выгружаем Whisper перед диаризацией")
+                # Управление VRAM: выгружаем Whisper перед диаризацией
+                if not skip_transcription and self.gpu_info and self.gpu_info.vram_total_mb < 8000:
+                    log.info("VRAM < 8 GB, выгружаем Whisper перед диаризацией")
                     transcriber.unload_model()
 
                 try:
@@ -352,6 +384,12 @@ class TranscriptionPipeline:
         for s, weight in self.STAGE_WEIGHTS.items():
             if s == stage:
                 break
+            # Пропускаем извлечение если транскрибация пропущена и диаризация выключена
+            if s == "extract" and self._skip_transcription and not self.config.enable_diarization:
+                continue
+            # Пропускаем транскрибацию если пропущена
+            if s == "transcribe" and self._skip_transcription:
+                continue
             # Пропускаем диаризацию если выключена
             if s == "diarize" and not self.config.enable_diarization:
                 continue
@@ -379,6 +417,10 @@ class TranscriptionPipeline:
         # Вычисляем суммарный вес активных этапов
         active_weight = 0.0
         for s, w in self.STAGE_WEIGHTS.items():
+            if s == "extract" and self._skip_transcription and not self.config.enable_diarization:
+                continue
+            if s == "transcribe" and self._skip_transcription:
+                continue
             if s == "diarize" and not self.config.enable_diarization:
                 continue
             if s == "analyze" and not self.config.enable_ai_analysis:

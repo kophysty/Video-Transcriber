@@ -106,15 +106,3 @@ def get_vram_requirement(model_name: str, compute_type: str) -> int:
         return info.vram_fp16_mb
     else:  # int8, float32
         return info.vram_int8_mb
-
-
-# Информация о pyannote модели
-PYANNOTE_MODEL_INFO = {
-    "name": "speaker-diarization-3.1",
-    "hf_repo": "pyannote/speaker-diarization-3.1",
-    "size_mb": 300,
-    "vram_mb": 2000,
-    "requires_token": True,
-    "description_ru": "Диаризация спикеров (определение кто говорит)",
-    "description_en": "Speaker diarization (who speaks when)",
-}

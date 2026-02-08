@@ -27,11 +27,8 @@ class ModelManager:
 
         self.models_dir = models_dir
         self.whisper_dir = models_dir / "whisper"
-        self.pyannote_dir = models_dir / "pyannote"
-
         # Создаём папки
         self.whisper_dir.mkdir(parents=True, exist_ok=True)
-        self.pyannote_dir.mkdir(parents=True, exist_ok=True)
 
     def list_downloaded_whisper_models(self) -> list[str]:
         """Получить список скачанных Whisper моделей."""
@@ -133,16 +130,6 @@ class ModelManager:
 
         return total_size
 
-    def is_pyannote_model_downloaded(self) -> bool:
-        """Проверить, скачана ли pyannote модель."""
-        model_path = self.pyannote_dir / "speaker-diarization-3.1"
-
-        if not model_path.exists():
-            return False
-
-        # Проверяем наличие config.yaml
-        return (model_path / "config.yaml").exists()
-
     def get_total_models_size(self) -> int:
         """Получить общий размер всех моделей в байтах."""
         total = 0
@@ -163,9 +150,6 @@ class ModelManager:
             "whisper": {
                 "downloaded": downloaded_whisper,
                 "available": available_whisper,
-            },
-            "pyannote": {
-                "downloaded": self.is_pyannote_model_downloaded(),
             },
             "total_size": format_file_size(self.get_total_models_size()),
         }
