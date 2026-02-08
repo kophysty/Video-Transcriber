@@ -1,10 +1,13 @@
 """Диаризация спикеров с помощью pyannote.audio."""
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Callable
 
 from app.utils.config import AppConfig
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -54,25 +57,45 @@ class Diarizer:
 
         # Загружаем модель
         if self.model_path and self.model_path.exists():
-            # Локальная модель
-            self._pipeline = Pipeline.from_pretrained(str(self.model_path))
+            log.info("Загрузка pyannote из локальной папки: %s", self.model_path)
+            try:
+                self._pipeline = Pipeline.from_pretrained(str(self.model_path))
+                log.info("Локальная модель pyannote загружена успешно")
+            except Exception as e:
+                log.warning("Не удалось загрузить локальную модель: %s", e)
+                log.info("Попытка загрузки из HuggingFace...")
+                self._load_from_hf(Pipeline)
         else:
-            # Из HuggingFace
-            if not self.hf_token:
-                raise ValueError(
-                    "Для загрузки модели pyannote нужен HuggingFace токен. "
-                    "Получите его на https://huggingface.co/settings/tokens"
-                )
-            self._pipeline = Pipeline.from_pretrained(
-                "pyannote/speaker-diarization-3.1",
-                token=self.hf_token,
-            )
+            log.info("Локальная модель не найдена: %s", self.model_path)
+            self._load_from_hf(Pipeline)
 
         # Переносим на устройство
         if self.device == "cuda" and torch.cuda.is_available():
+            log.info("Перенос pyannote на CUDA")
             self._pipeline.to(torch.device("cuda"))
+        else:
+            log.info("Pyannote работает на CPU (device=%s, cuda=%s)",
+                     self.device, torch.cuda.is_available())
 
         self._report_progress(0.1, "Модель диаризации загружена")
+
+    def _load_from_hf(self, Pipeline) -> None:
+        """Загрузить модель из HuggingFace."""
+        if not self.hf_token:
+            raise ValueError(
+                "Для загрузки модели pyannote нужен HuggingFace токен. "
+                "Получите его на https://huggingface.co/settings/tokens"
+            )
+        log.info("Загрузка pyannote из HuggingFace (токен: %s...)",
+                 self.hf_token[:8] if len(self.hf_token) > 8 else "***")
+        log.info("Убедитесь, что приняли лицензию на:")
+        log.info("  https://huggingface.co/pyannote/speaker-diarization-3.1")
+        log.info("  https://huggingface.co/pyannote/segmentation-3.0")
+        self._pipeline = Pipeline.from_pretrained(
+            "pyannote/speaker-diarization-3.1",
+            token=self.hf_token,
+        )
+        log.info("Модель pyannote загружена из HuggingFace")
 
     def unload_pipeline(self) -> None:
         """Выгрузить пайплайн для освобождения VRAM."""
@@ -111,6 +134,7 @@ class Diarizer:
             self.load_pipeline()
 
         self._report_progress(0.1, "Диаризация спикеров...")
+        log.info("Запуск диаризации: %s", audio_path.name)
 
         # Параметры
         diarization_params = {}
@@ -121,9 +145,13 @@ class Diarizer:
         if max_speakers is not None:
             diarization_params["max_speakers"] = max_speakers
 
+        if diarization_params:
+            log.info("Параметры диаризации: %s", diarization_params)
+
         # Запускаем диаризацию
         # Примечание: pyannote не даёт промежуточный прогресс,
         # поэтому просто ждём завершения
+        log.info("Диаризация в процессе (это может занять несколько минут)...")
         diarization = self._pipeline(str(audio_path), **diarization_params)
 
         # Конвертируем результат
@@ -138,6 +166,8 @@ class Diarizer:
             ))
             speakers.add(speaker)
 
+        log.info("Диаризация завершена: %d сегментов, %d спикеров",
+                 len(segments), len(speakers))
         self._report_progress(1.0, "Диаризация завершена")
 
         return DiarizationResult(

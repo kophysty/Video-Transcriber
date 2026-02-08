@@ -213,6 +213,14 @@ class MainWindow(ctk.CTk):
         self.hf_token_btn.pack(side="left", padx=(10, 0))
         self._update_hf_token_button()
 
+        hf_help_btn = ctk.CTkButton(
+            diar_frame,
+            text="?",
+            width=28,
+            command=self._show_hf_help,
+        )
+        hf_help_btn.pack(side="left", padx=(5, 0))
+
         # AI-анализ
         ai_frame = ctk.CTkFrame(parent, fg_color="transparent")
         ai_frame.pack(fill="x", pady=(0, 10))
@@ -233,6 +241,14 @@ class MainWindow(ctk.CTk):
             command=self._open_api_key_dialog,
         )
         self.api_key_btn.pack(side="left", padx=(10, 0))
+
+        api_help_btn = ctk.CTkButton(
+            ai_frame,
+            text="?",
+            width=28,
+            command=self._show_api_help,
+        )
+        api_help_btn.pack(side="left", padx=(5, 0))
 
         # Обновляем вид кнопки API ключа
         self._update_api_key_button()
@@ -265,6 +281,15 @@ class MainWindow(ctk.CTk):
         self.progress_bar = ctk.CTkProgressBar(parent)
         self.progress_bar.pack(fill="x", pady=(0, 5))
         self.progress_bar.set(0)
+
+        # Время (elapsed / ETA)
+        self.time_label = ctk.CTkLabel(
+            parent,
+            text="",
+            font=("", 11),
+            text_color="gray",
+        )
+        self.time_label.pack(anchor="w")
 
         # Статус
         self.status_label = ctk.CTkLabel(
@@ -447,12 +472,36 @@ class MainWindow(ctk.CTk):
     def _update_progress(self, progress: PipelineProgress) -> None:
         """Обновить UI прогресса."""
         self.progress_bar.set(progress.total_progress)
-        self.status_label.configure(text=progress.message)
+
+        # Названия этапов для отображения
+        stage_names = {
+            "extract": "Извлечение аудио",
+            "transcribe": "Транскрибация",
+            "diarize": "Диаризация",
+            "analyze": "AI-анализ",
+            "export": "Экспорт",
+        }
+        stage_name = stage_names.get(progress.stage, progress.stage)
+
+        # Процент
+        pct = int(progress.total_progress * 100)
+        status_text = f"[{pct}%] {stage_name}: {progress.message}"
+        self.status_label.configure(text=status_text)
+
+        # Время
+        from app.utils.formats import format_duration
+        elapsed_str = format_duration(progress.elapsed_seconds)
+        time_text = f"Прошло: {elapsed_str}"
+        if progress.eta_seconds > 0:
+            eta_str = format_duration(progress.eta_seconds)
+            time_text += f"  ·  Осталось: ~{eta_str}"
+        self.time_label.configure(text=time_text)
 
     def _on_complete(self, result) -> None:
         """Обработчик успешного завершения."""
         self._set_processing(False)
         self.progress_bar.set(1.0)
+        self.time_label.configure(text="")
 
         from app.utils.formats import format_duration
         duration_str = format_duration(result.duration)
@@ -471,6 +520,12 @@ class MainWindow(ctk.CTk):
             if result.analysis.summary.one_liner:
                 message += f"\n{result.analysis.summary.one_liner}\n"
 
+        # Предупреждения (пропущенные этапы)
+        if result.warnings:
+            message += f"\nПредупреждения:\n"
+            for w in result.warnings:
+                message += f"  - {w}\n"
+
         message += f"\nРезультаты сохранены в:\n{result.output_dir}"
 
         messagebox.showinfo("Готово", message)
@@ -481,12 +536,14 @@ class MainWindow(ctk.CTk):
         """Обработчик отмены."""
         self._set_processing(False)
         self.progress_bar.set(0)
+        self.time_label.configure(text="")
         self.status_label.configure(text="Отменено")
 
     def _on_error(self, error_msg: str) -> None:
         """Обработчик ошибки."""
         self._set_processing(False)
         self.progress_bar.set(0)
+        self.time_label.configure(text="")
         self.status_label.configure(text="Ошибка")
 
         messagebox.showerror("Ошибка", f"Произошла ошибка:\n\n{error_msg}")
@@ -612,6 +669,33 @@ class MainWindow(ctk.CTk):
             self.hf_token_btn.configure(text="HF токен", fg_color=["#3B8ED0", "#1F6AA5"])
         else:
             self.hf_token_btn.configure(text="HF токен", fg_color="gray")
+
+    def _show_hf_help(self) -> None:
+        """Показать инструкцию по HuggingFace токену."""
+        messagebox.showinfo(
+            "HuggingFace токен — инструкция",
+            "Для диаризации (определение спикеров) нужен токен HuggingFace.\n\n"
+            "Шаги:\n"
+            "1. Зарегистрируйтесь на huggingface.co\n\n"
+            "2. Создайте токен (тип Read):\n"
+            "   huggingface.co/settings/tokens\n\n"
+            "3. Примите лицензию на двух страницах:\n"
+            "   huggingface.co/pyannote/speaker-diarization-3.1\n"
+            "   huggingface.co/pyannote/segmentation-3.0\n\n"
+            "4. Вставьте токен по кнопке «HF токен»"
+        )
+
+    def _show_api_help(self) -> None:
+        """Показать инструкцию по Anthropic API ключу."""
+        messagebox.showinfo(
+            "Anthropic API ключ — инструкция",
+            "API ключ Anthropic нужен ТОЛЬКО для функции\n"
+            "веб-поиска при AI-анализе (опционально).\n\n"
+            "Без ключа AI-анализ работает через Claude CLI.\n\n"
+            "Для получения ключа:\n"
+            "   platform.claude.com/settings/keys\n\n"
+            "Вставьте ключ по кнопке «API ключ»"
+        )
 
     def _update_api_key_button(self) -> None:
         """Обновить вид кнопки API ключа."""
