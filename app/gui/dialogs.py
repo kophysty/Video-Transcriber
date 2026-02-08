@@ -271,10 +271,17 @@ class ModelManagerDialog(ctk.CTkToplevel):
             if not has_token:
                 ctk.CTkLabel(
                     info_frame,
-                    text="Требуется HuggingFace токен (кнопка HF в главном окне)",
+                    text="1) Укажите HF токен (кнопка в главном окне)",
                     font=("", 9),
                     text_color="#CC6600",
                 ).pack(anchor="w")
+
+            ctk.CTkLabel(
+                info_frame,
+                text="2) Примите условия: huggingface.co/pyannote/speaker-diarization-3.1",
+                font=("", 9),
+                text_color="#CC6600" if not has_token else "gray",
+            ).pack(anchor="w")
 
             download_btn = ctk.CTkButton(
                 self.pyannote_frame,
@@ -329,7 +336,16 @@ class ModelManagerDialog(ctk.CTkToplevel):
             self.after(0, self._download_complete, "pyannote speaker-diarization-3.1")
 
         except Exception as e:
-            self.after(0, self._download_error, str(e))
+            error_msg = str(e)
+            if "403" in error_msg or "restricted" in error_msg or "gated" in error_msg:
+                error_msg = (
+                    "Доступ запрещён (403). Модель pyannote — gated.\n\n"
+                    "Нужно принять условия на двух страницах:\n"
+                    "1. huggingface.co/pyannote/speaker-diarization-3.1\n"
+                    "2. huggingface.co/pyannote/segmentation-3.0\n\n"
+                    "Нажмите 'Accept' на каждой, затем повторите скачивание."
+                )
+            self.after(0, self._download_error, error_msg)
 
     def _delete_pyannote(self) -> None:
         """Удалить pyannote модель."""
