@@ -300,8 +300,14 @@ class TranscriptionPipeline:
         from app.exporters.srt_exporter import export_srt
         from app.exporters.vtt_exporter import export_vtt
         from app.exporters.txt_exporter import export_txt
+        from app.exporters.md_exporter import export_md
 
         base_name = input_path.stem
+
+        # MD (главный читаемый файл)
+        export_md(transcription, output_dir / f"{base_name}.md")
+        log.info("  Экспорт: %s.md", base_name)
+        self._report_progress(0.2, "MD экспортирован")
 
         # JSON
         export_json(
@@ -311,17 +317,17 @@ class TranscriptionPipeline:
             model=self.config.whisper_model,
         )
         log.info("  Экспорт: %s.json", base_name)
-        self._report_progress(0.25, "JSON экспортирован")
+        self._report_progress(0.4, "JSON экспортирован")
 
         # SRT
         export_srt(transcription, output_dir / f"{base_name}.srt")
         log.info("  Экспорт: %s.srt", base_name)
-        self._report_progress(0.5, "SRT экспортирован")
+        self._report_progress(0.55, "SRT экспортирован")
 
         # VTT
         export_vtt(transcription, output_dir / f"{base_name}.vtt")
         log.info("  Экспорт: %s.vtt", base_name)
-        self._report_progress(0.75, "VTT экспортирован")
+        self._report_progress(0.7, "VTT экспортирован")
 
         # TXT
         export_txt(transcription, output_dir / f"{base_name}.txt")

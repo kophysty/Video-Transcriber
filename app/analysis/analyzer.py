@@ -66,11 +66,11 @@ class AnalysisResult:
             ],
             "entities": {
                 "companies": [
-                    {"name": e.name, "description": e.description, "url": e.url}
+                    {"name": e.name, "description": e.description, "url": e.url, "context": e.context}
                     for e in self.entities.companies
                 ],
                 "services": [
-                    {"name": e.name, "description": e.description, "url": e.url}
+                    {"name": e.name, "description": e.description, "url": e.url, "context": e.context}
                     for e in self.entities.services
                 ],
                 "people": [
@@ -108,20 +108,25 @@ class AnalysisResult:
             if self.entities.companies:
                 lines.append("\n### Компании\n")
                 for e in self.entities.companies:
-                    url_part = f" - [{e.url}]({e.url})" if e.url else ""
-                    lines.append(f"- **{e.name}**: {e.description}{url_part}")
+                    url_part = f" [{e.url}]({e.url})" if e.url else ""
+                    lines.append(f"- **{e.name}**{url_part}: {e.description}")
+                    if e.context:
+                        lines.append(f"  *Контекст: {e.context}*")
 
             if self.entities.services:
-                lines.append("\n### Сервисы\n")
+                lines.append("\n### Сервисы и продукты\n")
                 for e in self.entities.services:
-                    url_part = f" - [{e.url}]({e.url})" if e.url else ""
-                    lines.append(f"- **{e.name}**: {e.description}{url_part}")
+                    url_part = f" [{e.url}]({e.url})" if e.url else ""
+                    lines.append(f"- **{e.name}**{url_part}: {e.description}")
+                    if e.context:
+                        lines.append(f"  *Контекст: {e.context}*")
 
             if self.entities.people:
                 lines.append("\n### Люди\n")
                 for e in self.entities.people:
-                    context_part = f" ({e.context})" if e.context else ""
-                    lines.append(f"- **{e.name}**{context_part}")
+                    lines.append(f"- **{e.name}**")
+                    if e.context:
+                        lines.append(f"  *{e.context}*")
 
         return "\n".join(lines)
 

@@ -42,19 +42,21 @@ def extract_highlights_and_entities(
         "companies": [
             {{
                 "name": "Название компании",
-                "description": "Краткое описание (1 предложение)"
+                "description": "Краткое описание (1 предложение)",
+                "context": "В каком контексте упоминалась в разговоре"
             }}
         ],
         "services": [
             {{
                 "name": "Название сервиса/продукта",
-                "description": "Что это за сервис (1 предложение)"
+                "description": "Что это за сервис (1 предложение)",
+                "context": "В каком контексте упоминался в разговоре"
             }}
         ],
         "people": [
             {{
                 "name": "Имя человека",
-                "context": "Кто это / в каком контексте упомянут"
+                "context": "Кто это и в каком контексте упомянут в разговоре"
             }}
         ]
     }}
@@ -63,6 +65,7 @@ def extract_highlights_and_entities(
 Правила:
 - Выбирай только действительно важные моменты (3-10 штук)
 - Для сущностей указывай только явно упомянутые
+- Поле "context" ОБЯЗАТЕЛЬНО — объясни, зачем/почему сущность упоминалась
 - Таймстампы бери из транскрипции
 - Отвечай ТОЛЬКО валидным JSON"""
 
@@ -108,12 +111,14 @@ def _parse_extraction_response(
             entities.companies.append(Entity(
                 name=c.get("name", ""),
                 description=c.get("description", ""),
+                context=c.get("context", ""),
             ))
 
         for s in entities_data.get("services", []):
             entities.services.append(Entity(
                 name=s.get("name", ""),
                 description=s.get("description", ""),
+                context=s.get("context", ""),
             ))
 
         for p in entities_data.get("people", []):
