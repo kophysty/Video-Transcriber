@@ -204,6 +204,15 @@ class MainWindow(ctk.CTk):
         )
         self.diarization_check.pack(side="left")
 
+        self.hf_token_btn = ctk.CTkButton(
+            diar_frame,
+            text="HF токен",
+            width=80,
+            command=self._open_hf_token_dialog,
+        )
+        self.hf_token_btn.pack(side="left", padx=(10, 0))
+        self._update_hf_token_button()
+
         # AI-анализ
         ai_frame = ctk.CTkFrame(parent, fg_color="transparent")
         ai_frame.pack(fill="x", pady=(0, 10))
@@ -503,6 +512,8 @@ class MainWindow(ctk.CTk):
             self.lang_dropdown.configure(state="disabled")
             self.diarization_check.configure(state="disabled")
             self.ai_analysis_check.configure(state="disabled")
+            self.hf_token_btn.configure(state="disabled")
+            self.api_key_btn.configure(state="disabled")
         else:
             self.cancel_btn.pack_forget()
             self.start_btn.pack(fill="x")
@@ -514,6 +525,8 @@ class MainWindow(ctk.CTk):
             self.lang_dropdown.configure(state="normal")
             self.diarization_check.configure(state="normal")
             self.ai_analysis_check.configure(state="normal")
+            self.hf_token_btn.configure(state="normal")
+            self.api_key_btn.configure(state="normal")
 
     def _load_settings(self) -> None:
         """Загрузить сохранённые настройки."""
@@ -531,6 +544,7 @@ class MainWindow(ctk.CTk):
 
         # Диаризация
         self.diarization_var.set(self.config.enable_diarization)
+        self._update_hf_token_button()
 
         # AI-анализ
         self.ai_analysis_var.set(self.config.enable_ai_analysis)
@@ -579,6 +593,25 @@ class MainWindow(ctk.CTk):
         self.wait_window(dialog)
 
         self._update_api_key_button()
+
+    def _open_hf_token_dialog(self) -> None:
+        """Открыть диалог ввода HuggingFace токена."""
+        from app.gui.dialogs import HfTokenDialog
+
+        dialog = HfTokenDialog(self, self.config)
+        dialog.grab_set()
+        self.wait_window(dialog)
+
+        self._update_hf_token_button()
+
+    def _update_hf_token_button(self) -> None:
+        """Обновить вид кнопки HF токена."""
+        has_token = bool(self.config.hf_token)
+
+        if has_token:
+            self.hf_token_btn.configure(text="HF токен", fg_color=["#3B8ED0", "#1F6AA5"])
+        else:
+            self.hf_token_btn.configure(text="HF токен", fg_color="gray")
 
     def _update_api_key_button(self) -> None:
         """Обновить вид кнопки API ключа."""

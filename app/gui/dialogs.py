@@ -30,8 +30,8 @@ class ModelManagerDialog(ctk.CTkToplevel):
 
         # Настройка окна
         self.title("Управление моделями")
-        self.geometry("550x620")
-        self.minsize(450, 550)
+        self.geometry("600x700")
+        self.minsize(500, 600)
 
         # Создаём интерфейс
         self._create_widgets()
@@ -46,42 +46,42 @@ class ModelManagerDialog(ctk.CTkToplevel):
 
     def _create_widgets(self) -> None:
         """Создать виджеты."""
-        # Главный контейнер
-        main_frame = ctk.CTkFrame(self, fg_color="transparent")
-        main_frame.pack(fill="both", expand=True, padx=20, pady=20)
+        # Один общий скроллабл контейнер
+        self.scroll_frame = ctk.CTkScrollableFrame(self)
+        self.scroll_frame.pack(fill="both", expand=True, padx=15, pady=15)
 
         # === Скачанные модели Whisper ===
         ctk.CTkLabel(
-            main_frame,
-            text="Распознавание речи (Whisper) — скачанные",
+            self.scroll_frame,
+            text="Распознавание речи (Whisper) \u2014 скачанные",
             font=("", 14, "bold"),
-        ).pack(anchor="w", pady=(0, 10))
+        ).pack(anchor="w", pady=(0, 8))
 
-        self.downloaded_frame = ctk.CTkScrollableFrame(main_frame, height=130)
+        self.downloaded_frame = ctk.CTkFrame(self.scroll_frame)
         self.downloaded_frame.pack(fill="x", pady=(0, 15))
 
         # === Доступные модели Whisper ===
         ctk.CTkLabel(
-            main_frame,
-            text="Доступные для скачивания",
+            self.scroll_frame,
+            text="Whisper \u2014 доступные для скачивания",
             font=("", 14, "bold"),
-        ).pack(anchor="w", pady=(0, 10))
+        ).pack(anchor="w", pady=(0, 8))
 
-        self.available_frame = ctk.CTkScrollableFrame(main_frame, height=130)
+        self.available_frame = ctk.CTkFrame(self.scroll_frame)
         self.available_frame.pack(fill="x", pady=(0, 15))
 
         # === Диаризация (pyannote) ===
         ctk.CTkLabel(
-            main_frame,
+            self.scroll_frame,
             text="Диаризация спикеров (pyannote)",
             font=("", 14, "bold"),
-        ).pack(anchor="w", pady=(0, 10))
+        ).pack(anchor="w", pady=(0, 8))
 
-        self.pyannote_frame = ctk.CTkFrame(main_frame)
+        self.pyannote_frame = ctk.CTkFrame(self.scroll_frame)
         self.pyannote_frame.pack(fill="x", pady=(0, 15))
 
         # === Прогресс скачивания ===
-        self.progress_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        self.progress_frame = ctk.CTkFrame(self.scroll_frame, fg_color="transparent")
         self.progress_frame.pack(fill="x", pady=(0, 10))
 
         self.progress_bar = ctk.CTkProgressBar(self.progress_frame)
@@ -100,18 +100,21 @@ class ModelManagerDialog(ctk.CTkToplevel):
 
         # === Общий размер ===
         self.size_label = ctk.CTkLabel(
-            main_frame,
+            self.scroll_frame,
             text="",
             font=("", 11),
             text_color="gray",
         )
-        self.size_label.pack(anchor="w", pady=(10, 0))
+        self.size_label.pack(anchor="w", pady=(5, 0))
 
         # Заполняем списки
         self._refresh_lists()
 
     def _refresh_lists(self) -> None:
         """Обновить списки моделей."""
+        if not self.winfo_exists():
+            return
+
         # Очищаем
         for widget in self.downloaded_frame.winfo_children():
             widget.destroy()
@@ -134,9 +137,18 @@ class ModelManagerDialog(ctk.CTkToplevel):
             ).pack(pady=10)
 
         # Доступные Whisper
+        available_count = 0
         for model_info in get_all_models():
             if model_info.name not in downloaded:
                 self._add_available_model_row(model_info)
+                available_count += 1
+
+        if available_count == 0:
+            ctk.CTkLabel(
+                self.available_frame,
+                text="Все модели скачаны",
+                text_color="gray",
+            ).pack(pady=10)
 
         # Pyannote
         self._refresh_pyannote_section()
@@ -167,7 +179,7 @@ class ModelManagerDialog(ctk.CTkToplevel):
         size = self.model_manager.get_whisper_model_size(model_name)
         ctk.CTkLabel(
             info_frame,
-            text=f"{model_info.description_ru} · {format_file_size(size)}",
+            text=f"{model_info.description_ru} \u00b7 {format_file_size(size)}",
             font=("", 10),
             text_color="gray",
         ).pack(anchor="w")
@@ -199,7 +211,7 @@ class ModelManagerDialog(ctk.CTkToplevel):
 
         ctk.CTkLabel(
             info_frame,
-            text=f"{model_info.description_ru} · ~{format_file_size(model_info.size_mb * 1024 * 1024)} · VRAM: {model_info.vram_fp16_mb} MB",
+            text=f"{model_info.description_ru} \u00b7 ~{format_file_size(model_info.size_mb * 1024 * 1024)} \u00b7 VRAM: {model_info.vram_fp16_mb} MB",
             font=("", 10),
             text_color="gray",
         ).pack(anchor="w")
@@ -229,7 +241,7 @@ class ModelManagerDialog(ctk.CTkToplevel):
         if is_downloaded:
             ctk.CTkLabel(
                 info_frame,
-                text=f"{PYANNOTE_MODEL_INFO['description_ru']} · Скачана",
+                text=f"{PYANNOTE_MODEL_INFO['description_ru']} \u00b7 Скачана",
                 font=("", 10),
                 text_color="gray",
             ).pack(anchor="w")
@@ -245,11 +257,9 @@ class ModelManagerDialog(ctk.CTkToplevel):
         else:
             has_token = bool(self.config.hf_token)
             status_text = (
-                f"{PYANNOTE_MODEL_INFO['description_ru']} · "
+                f"{PYANNOTE_MODEL_INFO['description_ru']} \u00b7 "
                 f"~{format_file_size(PYANNOTE_MODEL_INFO['size_mb'] * 1024 * 1024)}"
             )
-            if not has_token:
-                status_text += " · Требуется HF токен"
 
             ctk.CTkLabel(
                 info_frame,
@@ -257,6 +267,14 @@ class ModelManagerDialog(ctk.CTkToplevel):
                 font=("", 10),
                 text_color="gray",
             ).pack(anchor="w")
+
+            if not has_token:
+                ctk.CTkLabel(
+                    info_frame,
+                    text="Требуется HuggingFace токен (кнопка HF в главном окне)",
+                    font=("", 9),
+                    text_color="#CC6600",
+                ).pack(anchor="w")
 
             download_btn = ctk.CTkButton(
                 self.pyannote_frame,
@@ -267,14 +285,6 @@ class ModelManagerDialog(ctk.CTkToplevel):
             )
             download_btn.pack(side="right", padx=10, pady=8)
 
-            if not has_token:
-                ctk.CTkLabel(
-                    info_frame,
-                    text="Укажите HuggingFace токен в настройках для скачивания",
-                    font=("", 9),
-                    text_color="#CC6600",
-                ).pack(anchor="w")
-
     def _download_pyannote(self) -> None:
         """Скачать pyannote модель."""
         if self._downloading:
@@ -284,9 +294,8 @@ class ModelManagerDialog(ctk.CTkToplevel):
         if not self.config.hf_token:
             messagebox.showwarning(
                 "Нужен токен",
-                "Для скачивания модели pyannote нужен HuggingFace токен.\n\n"
-                "Получите его на huggingface.co/settings/tokens\n"
-                "и укажите в настройках приложения."
+                "Для скачивания pyannote нужен HuggingFace токен.\n\n"
+                "Укажите его через кнопку 'HF токен' в главном окне."
             )
             return
 
@@ -305,7 +314,6 @@ class ModelManagerDialog(ctk.CTkToplevel):
         """Поток скачивания pyannote."""
         try:
             from huggingface_hub import snapshot_download
-            import shutil
 
             model_path = self.model_manager.pyannote_dir / "speaker-diarization-3.1"
 
@@ -376,23 +384,36 @@ class ModelManagerDialog(ctk.CTkToplevel):
 
     def _update_download_progress(self, progress: float, message: str) -> None:
         """Обновить прогресс скачивания."""
-        self.progress_bar.set(progress)
-        self.progress_label.configure(text=message)
+        if not self.winfo_exists():
+            return
+        try:
+            self.progress_bar.set(progress)
+            self.progress_label.configure(text=message)
+        except tk.TclError:
+            pass
 
     def _download_complete(self, model_name: str) -> None:
         """Скачивание завершено."""
         self._downloading = False
-        self.progress_frame.pack_forget()
-        self._refresh_lists()
-
-        messagebox.showinfo("Готово", f"Модель {model_name} успешно скачана!")
+        if not self.winfo_exists():
+            return
+        try:
+            self.progress_frame.pack_forget()
+            self._refresh_lists()
+            messagebox.showinfo("Готово", f"Модель {model_name} успешно скачана!")
+        except tk.TclError:
+            pass
 
     def _download_error(self, error_msg: str) -> None:
         """Ошибка скачивания."""
         self._downloading = False
-        self.progress_frame.pack_forget()
-
-        messagebox.showerror("Ошибка", f"Ошибка скачивания:\n\n{error_msg}")
+        if not self.winfo_exists():
+            return
+        try:
+            self.progress_frame.pack_forget()
+            messagebox.showerror("Ошибка", f"Ошибка скачивания:\n\n{error_msg}")
+        except tk.TclError:
+            pass
 
     def _delete_model(self, model_name: str) -> None:
         """Удалить модель."""
@@ -405,6 +426,116 @@ class ModelManagerDialog(ctk.CTkToplevel):
                 self._refresh_lists()
             except Exception as e:
                 messagebox.showerror("Ошибка", f"Ошибка удаления:\n\n{e}")
+
+
+class HfTokenDialog(ctk.CTkToplevel):
+    """Диалог ввода HuggingFace токена."""
+
+    def __init__(self, parent, config: AppConfig):
+        super().__init__(parent)
+
+        self.config = config
+
+        # Настройка окна
+        self.title("HuggingFace токен")
+        self.geometry("450x220")
+        self.resizable(False, False)
+
+        # Создаём интерфейс
+        self._create_widgets()
+
+        # Центрируем относительно родителя
+        self.transient(parent)
+        self.update_idletasks()
+
+        x = parent.winfo_x() + (parent.winfo_width() - self.winfo_width()) // 2
+        y = parent.winfo_y() + (parent.winfo_height() - self.winfo_height()) // 2
+        self.geometry(f"+{x}+{y}")
+
+    def _create_widgets(self) -> None:
+        """Создать виджеты."""
+        main_frame = ctk.CTkFrame(self, fg_color="transparent")
+        main_frame.pack(fill="both", expand=True, padx=20, pady=20)
+
+        # Описание
+        ctk.CTkLabel(
+            main_frame,
+            text="HuggingFace токен",
+            font=("", 12),
+        ).pack(anchor="w", pady=(0, 5))
+
+        ctk.CTkLabel(
+            main_frame,
+            text="Нужен для скачивания модели диаризации (pyannote).\n"
+                 "Получите бесплатно: huggingface.co/settings/tokens",
+            font=("", 10),
+            text_color="gray",
+        ).pack(anchor="w", pady=(0, 15))
+
+        # Поле ввода
+        self.token_entry = ctk.CTkEntry(
+            main_frame,
+            placeholder_text="hf_...",
+            show="*",
+            width=400,
+        )
+        self.token_entry.pack(fill="x", pady=(0, 15))
+
+        # Если токен уже есть — показываем маскированный
+        if self.config.hf_token:
+            masked = self.config.hf_token[:6] + "..." + self.config.hf_token[-4:]
+            self.token_entry.insert(0, masked)
+
+        # Кнопки
+        btn_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        btn_frame.pack(fill="x")
+
+        ctk.CTkButton(
+            btn_frame,
+            text="Сохранить",
+            command=self._save,
+        ).pack(side="left", padx=(0, 10))
+
+        ctk.CTkButton(
+            btn_frame,
+            text="Удалить токен",
+            fg_color="gray",
+            command=self._clear,
+        ).pack(side="left", padx=(0, 10))
+
+        ctk.CTkButton(
+            btn_frame,
+            text="Отмена",
+            fg_color="gray",
+            command=self.destroy,
+        ).pack(side="right")
+
+    def _save(self) -> None:
+        """Сохранить токен."""
+        token = self.token_entry.get().strip()
+
+        # Если токен не изменился (маскированный) — просто закрываем
+        if "..." in token and len(token) < 20:
+            self.destroy()
+            return
+
+        # Валидация формата
+        if token and not token.startswith("hf_"):
+            messagebox.showerror(
+                "Ошибка",
+                "HuggingFace токен должен начинаться с 'hf_'"
+            )
+            return
+
+        self.config.hf_token = token
+        self.config.save()
+        self.destroy()
+
+    def _clear(self) -> None:
+        """Удалить токен."""
+        self.config.hf_token = ""
+        self.config.save()
+        self.destroy()
 
 
 class ApiKeyDialog(ctk.CTkToplevel):
@@ -446,7 +577,7 @@ class ApiKeyDialog(ctk.CTkToplevel):
         ctk.CTkLabel(
             main_frame,
             text="Без ключа AI-анализ работает через Claude CLI.\n"
-                 "С ключом — дополнительно ищет ссылки через веб-поиск.",
+                 "С ключом \u2014 дополнительно ищет ссылки через веб-поиск.",
             font=("", 10),
             text_color="gray",
         ).pack(anchor="w", pady=(0, 15))
