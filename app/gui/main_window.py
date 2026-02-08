@@ -54,8 +54,8 @@ class MainWindow(ctk.CTk):
 
         # Настройка окна
         self.title("Video Transcriber")
-        self.geometry("600x550")
-        self.minsize(500, 500)
+        self.geometry("600x680")
+        self.minsize(500, 620)
 
         # Тема
         ctk.set_appearance_mode(self.config.theme)
