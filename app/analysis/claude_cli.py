@@ -1,12 +1,47 @@
 """Обёртка для вызова Claude Code CLI."""
 
+import logging
+import os
 import shutil
 import subprocess
+import sys
+from pathlib import Path
+
+log = logging.getLogger(__name__)
+
+
+def _find_claude_executable() -> str | None:
+    """
+    Найти путь к Claude CLI.
+
+    shutil.which не всегда находит npm-глобальные пакеты на Windows,
+    поэтому проверяем типичные пути вручную.
+    """
+    # 1. Стандартный поиск через PATH
+    found = shutil.which("claude")
+    if found:
+        return found
+
+    # 2. Windows: проверяем npm global директорию
+    if sys.platform == "win32":
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            npm_dir = Path(appdata) / "npm"
+            for name in ("claude.cmd", "claude.exe", "claude"):
+                candidate = npm_dir / name
+                if candidate.exists():
+                    log.info("Claude CLI найден: %s", candidate)
+                    return str(candidate)
+
+    return None
 
 
 def is_claude_available() -> bool:
     """Проверить наличие Claude CLI в системе."""
-    return shutil.which("claude") is not None
+    result = _find_claude_executable() is not None
+    if not result:
+        log.warning("Claude CLI не найден в PATH и типичных директориях npm")
+    return result
 
 
 def call_claude(prompt: str, timeout: int = 300) -> str:
@@ -26,15 +61,18 @@ def call_claude(prompt: str, timeout: int = 300) -> str:
     Raises:
         RuntimeError: Если Claude CLI недоступен или вернул ошибку
     """
-    if not is_claude_available():
+    claude_path = _find_claude_executable()
+    if not claude_path:
         raise RuntimeError(
             "Claude CLI не найден. Установите Claude Code: "
             "npm install -g @anthropic-ai/claude-code"
         )
 
+    log.info("Вызов Claude CLI: %s", claude_path)
+
     try:
         result = subprocess.run(
-            ["claude", "-p", "--output-format", "text"],
+            [claude_path, "-p", "--output-format", "text"],
             input=prompt,
             capture_output=True,
             text=True,

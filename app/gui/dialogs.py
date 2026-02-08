@@ -341,9 +341,10 @@ class ModelManagerDialog(ctk.CTkToplevel):
             if "403" in error_msg or "restricted" in error_msg or "gated" in error_msg:
                 error_msg = (
                     "Доступ запрещён (403). Модель pyannote — gated.\n\n"
-                    "Нужно принять условия на двух страницах:\n"
+                    "Нужно принять условия на трёх страницах:\n"
                     "1. huggingface.co/pyannote/speaker-diarization-3.1\n"
-                    "2. huggingface.co/pyannote/segmentation-3.0\n\n"
+                    "2. huggingface.co/pyannote/segmentation-3.0\n"
+                    "3. huggingface.co/pyannote/speaker-diarization-community-1\n\n"
                     "Нажмите 'Accept' на каждой, затем повторите скачивание."
                 )
             self.after(0, self._download_error, error_msg)
@@ -684,7 +685,9 @@ class HelpDialog(ctk.CTkToplevel):
         """
         super().__init__(parent)
         self.title(title)
-        self.geometry("480x320")
+        # Высота зависит от количества шагов
+        height = 200 + len(steps) * 55 + (40 if intro else 0)
+        self.geometry(f"480x{height}")
         self.resizable(False, False)
         self.transient(parent)
         self.grab_set()

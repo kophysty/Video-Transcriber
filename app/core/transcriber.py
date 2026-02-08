@@ -1,10 +1,13 @@
 """Транскрибация аудио с помощью faster-whisper."""
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Callable, Generator, Any
 
 from app.utils.config import AppConfig
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -116,6 +119,7 @@ class Transcriber:
         self._report_progress(0.1, "Начинаем транскрибацию...")
 
         # Настройки транскрибации
+        log.info("Запуск faster-whisper: %s, язык=%s", audio_path.name, language or "auto")
         segments_gen, info = self._model.transcribe(
             str(audio_path),
             language=language if language != "auto" else None,
@@ -128,8 +132,18 @@ class Transcriber:
             },
         )
 
+        # Используем info.duration если total_duration не задан/нулевой
+        duration_for_progress = total_duration
+        if not duration_for_progress or duration_for_progress <= 0:
+            duration_for_progress = info.duration
+            log.info("total_duration=0, используем info.duration=%.1f сек", info.duration)
+
+        log.info("Язык: %s (%.1f%%), длительность: %.1f сек",
+                 info.language, info.language_probability * 100, info.duration)
+
         # Собираем сегменты и отслеживаем прогресс
         segments = []
+        last_progress_pct = 0
         for segment in segments_gen:
             # Конвертируем слова
             words = []
@@ -150,13 +164,18 @@ class Transcriber:
             ))
 
             # Прогресс
-            if total_duration and total_duration > 0:
-                progress = min(0.1 + (segment.end / total_duration) * 0.8, 0.9)
-                self._report_progress(
-                    progress,
-                    f"Транскрибация: {int(progress * 100)}%"
-                )
+            if duration_for_progress and duration_for_progress > 0:
+                progress = min(0.1 + (segment.end / duration_for_progress) * 0.8, 0.9)
+                pct = int(progress * 100)
+                # Обновляем UI не чаще чем каждые 2%
+                if pct >= last_progress_pct + 2:
+                    last_progress_pct = pct
+                    self._report_progress(
+                        progress,
+                        f"Транскрибация: {pct}%"
+                    )
 
+        log.info("Транскрибация завершена: %d сегментов", len(segments))
         self._report_progress(0.9, "Транскрибация завершена")
 
         return TranscriptionResult(

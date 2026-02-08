@@ -91,6 +91,7 @@ class Diarizer:
         log.info("Убедитесь, что приняли лицензию на:")
         log.info("  https://huggingface.co/pyannote/speaker-diarization-3.1")
         log.info("  https://huggingface.co/pyannote/segmentation-3.0")
+        log.info("  https://huggingface.co/pyannote/speaker-diarization-community-1")
         self._pipeline = Pipeline.from_pretrained(
             "pyannote/speaker-diarization-3.1",
             token=self.hf_token,

@@ -118,7 +118,10 @@ class TranscriptionPipeline:
         try:
             # Получаем длительность
             duration = get_audio_duration(audio_path) or 0.0
-            log.info("Длительность аудио: %.1f сек (%.1f мин)", duration, duration / 60)
+            if duration > 0:
+                log.info("Длительность аудио (ffprobe): %.1f сек (%.1f мин)", duration, duration / 60)
+            else:
+                log.warning("ffprobe не определил длительность, будет использована из faster-whisper")
 
             # 2. Транскрибация
             self._check_cancelled()
@@ -126,6 +129,12 @@ class TranscriptionPipeline:
             t0 = time.monotonic()
             transcription, transcriber = self._transcribe(audio_path, duration)
             t_transcribe = time.monotonic() - t0
+
+            # Используем длительность из faster-whisper если ffprobe не сработал
+            if duration <= 0 and transcription.info:
+                duration = transcription.info.duration
+                log.info("Длительность из faster-whisper: %.1f сек (%.1f мин)", duration, duration / 60)
+
             log.info("[2/5] Транскрибация завершена за %.1f сек, сегментов: %d, язык: %s",
                      t_transcribe, len(transcription.segments),
                      transcription.info.language if transcription.info else "?")

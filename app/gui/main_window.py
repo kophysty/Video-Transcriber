@@ -682,6 +682,7 @@ class MainWindow(ctk.CTk):
                 ("Создайте токен (тип Read)", "https://huggingface.co/settings/tokens"),
                 ("Примите лицензию: speaker-diarization-3.1", "https://huggingface.co/pyannote/speaker-diarization-3.1"),
                 ("Примите лицензию: segmentation-3.0", "https://huggingface.co/pyannote/segmentation-3.0"),
+                ("Примите лицензию: speaker-diarization-community-1", "https://huggingface.co/pyannote/speaker-diarization-community-1"),
                 ("Вставьте токен по кнопке «HF токен»", None),
             ],
         )
