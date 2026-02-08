@@ -14,7 +14,8 @@ def resolve_entity_links(
     """
     Найти ссылки на упомянутые сервисы и компании.
 
-    Использует Claude для поиска актуальных URL.
+    Использует Claude с web_search tool для поиска актуальных URL.
+    При ошибке — фоллбэк на запрос из памяти модели.
 
     Args:
         client: Anthropic клиент
@@ -44,55 +45,99 @@ def resolve_entity_links(
     if not items_to_resolve:
         return entities
 
-    # Запрашиваем ссылки у Claude
-    items_json = json.dumps(items_to_resolve, ensure_ascii=False, indent=2)
-
-    prompt = f"""Для каждого сервиса или компании из списка укажи официальный сайт.
-
-СПИСОК:
-{items_json}
-
-Верни JSON массив в том же порядке:
-[
-    {{
-        "name": "Название",
-        "url": "https://example.com" или null если не знаешь
-    }}
-]
-
-Правила:
-- Указывай только официальные сайты
-- Если не уверен в URL — ставь null
-- Не придумывай URL, только известные тебе
-- Отвечай ТОЛЬКО валидным JSON массивом"""
-
+    # Пробуем с web_search, при ошибке — фоллбэк
     try:
-        response = client.messages.create(
-            model=model,
-            max_tokens=1000,
-            messages=[{"role": "user", "content": prompt}],
-        )
-
-        urls = _parse_urls_response(response.content[0].text)
-
-        # Применяем найденные URL к сущностям
-        url_map = {item["name"].lower(): item.get("url") for item in urls}
-
-        for company in entities.companies:
-            url = url_map.get(company.name.lower())
-            if url:
-                company.url = url
-
-        for service in entities.services:
-            url = url_map.get(service.name.lower())
-            if url:
-                service.url = url
-
+        url_map = _resolve_with_web_search(client, model, items_to_resolve)
     except Exception:
-        # При ошибке просто возвращаем сущности без URL
-        pass
+        try:
+            url_map = _resolve_from_memory(client, model, items_to_resolve)
+        except Exception:
+            return entities
+
+    # Применяем найденные URL к сущностям
+    for company in entities.companies:
+        url = url_map.get(company.name.lower())
+        if url:
+            company.url = url
+
+    for service in entities.services:
+        url = url_map.get(service.name.lower())
+        if url:
+            service.url = url
 
     return entities
+
+
+def _resolve_with_web_search(
+    client: Any,
+    model: str,
+    items: list[dict],
+) -> dict[str, str]:
+    """Найти URL через веб-поиск Claude."""
+    items_json = json.dumps(items, ensure_ascii=False, indent=2)
+
+    prompt = (
+        f"Найди официальные сайты для каждого сервиса/компании из списка.\n\n"
+        f"СПИСОК:\n{items_json}\n\n"
+        f"Для каждого элемента найди через поиск их официальный сайт.\n"
+        f"Верни JSON массив:\n"
+        f'[{{"name": "Название", "url": "https://..."}}]\n\n'
+        f"Если не нашёл сайт — ставь url: null.\n"
+        f"Отвечай ТОЛЬКО валидным JSON массивом."
+    )
+
+    response = client.messages.create(
+        model=model,
+        max_tokens=1000,
+        tools=[{"name": "web_search", "type": "web_search_20250305"}],
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    # Извлекаем текстовый ответ
+    for block in response.content:
+        if hasattr(block, "text"):
+            return _parse_urls_to_map(block.text)
+
+    return {}
+
+
+def _resolve_from_memory(
+    client: Any,
+    model: str,
+    items: list[dict],
+) -> dict[str, str]:
+    """Фоллбэк: запросить URL из памяти модели."""
+    items_json = json.dumps(items, ensure_ascii=False, indent=2)
+
+    prompt = (
+        f"Для каждого сервиса или компании из списка укажи официальный сайт.\n\n"
+        f"СПИСОК:\n{items_json}\n\n"
+        f"Верни JSON массив в том же порядке:\n"
+        f'[{{"name": "Название", "url": "https://example.com"}}]\n\n'
+        f"Правила:\n"
+        f"- Указывай только официальные сайты\n"
+        f"- Если не уверен в URL — ставь null\n"
+        f"- Не придумывай URL, только известные тебе\n"
+        f"- Отвечай ТОЛЬКО валидным JSON массивом"
+    )
+
+    response = client.messages.create(
+        model=model,
+        max_tokens=1000,
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    return _parse_urls_to_map(response.content[0].text)
+
+
+def _parse_urls_to_map(response_text: str) -> dict[str, str]:
+    """Парсить ответ с URL в словарь name→url."""
+    urls = _parse_urls_response(response_text)
+    return {
+        item["name"].lower(): item["url"]
+        for item in urls
+        if item.get("url")
+    }
 
 
 def _parse_urls_response(response_text: str) -> list[dict]:

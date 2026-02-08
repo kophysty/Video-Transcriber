@@ -2,7 +2,6 @@
 
 import re
 import subprocess
-import tempfile
 from pathlib import Path
 from typing import Optional, Callable
 
@@ -59,7 +58,10 @@ class AudioExtractor:
             output_dir.mkdir(parents=True, exist_ok=True)
             output_path = output_dir / f"{input_path.stem}_audio.wav"
         else:
-            output_path = Path(tempfile.mktemp(suffix=".wav"))
+            import tempfile
+            tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+            tmp.close()
+            output_path = Path(tmp.name)
 
         # Получаем длительность для прогресса
         duration = get_audio_duration(input_path)

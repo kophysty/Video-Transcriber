@@ -311,18 +311,19 @@ class TranscriptionPipeline:
         # Вычисляем общий прогресс
         stage_weight = self.STAGE_WEIGHTS.get(self._current_stage, 0.0)
 
-        # Корректируем веса для пропущенных этапов
-        skipped_weight = 0.0
-        if not self.config.enable_diarization:
-            skipped_weight += self.STAGE_WEIGHTS["diarize"]
-        if not (self.config.enable_ai_analysis and self.config.anthropic_api_key):
-            skipped_weight += self.STAGE_WEIGHTS["analyze"]
+        # Вычисляем суммарный вес активных этапов
+        active_weight = 0.0
+        for s, w in self.STAGE_WEIGHTS.items():
+            if s == "diarize" and not self.config.enable_diarization:
+                continue
+            if s == "analyze" and not (self.config.enable_ai_analysis and self.config.anthropic_api_key):
+                continue
+            active_weight += w
 
-        # Перераспределяем на транскрибацию
-        if self._current_stage == "transcribe":
-            stage_weight += skipped_weight
+        # Нормализуем прогресс чтобы он заполнял 0.0-1.0
+        scale = 1.0 / active_weight if active_weight > 0 else 1.0
 
-        total_progress = self._stage_offset + (stage_progress * stage_weight)
+        total_progress = (self._stage_offset + stage_progress * stage_weight) * scale
 
         self.progress_callback(PipelineProgress(
             stage=self._current_stage,

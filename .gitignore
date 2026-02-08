@@ -1,8 +1,6 @@
 # Models (large files)
-models/whisper/*
-models/pyannote/*
-!models/whisper/.gitkeep
-!models/pyannote/.gitkeep
+models/whisper/*/
+models/pyannote/*/
 
 # Python
 __pycache__/
@@ -24,6 +22,10 @@ config.json
 *.swp
 *.swo
 
+# Claude Code
+.claude/
+
 # Temp
 *.wav
 *.tmp
+nul

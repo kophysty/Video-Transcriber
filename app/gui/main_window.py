@@ -384,6 +384,7 @@ class MainWindow(ctk.CTk):
         self.config.whisper_model = model_name
         self.config.language = LANGUAGES.get(self.lang_var.get(), "auto")
         self.config.enable_diarization = self.diarization_var.get()
+        self.config.enable_ai_analysis = self.ai_analysis_var.get()
         self.config.save()
 
         # Переключаем UI
@@ -415,7 +416,20 @@ class MainWindow(ctk.CTk):
             self.after(0, self._on_cancelled)
 
         except Exception as e:
-            self.after(0, self._on_error, str(e))
+            error_msg = str(e)
+
+            # Определяем CUDA OOM
+            oom_keywords = ["out of memory", "CUDA out of memory", "OutOfMemoryError"]
+            if any(kw.lower() in error_msg.lower() for kw in oom_keywords):
+                error_msg = (
+                    "Недостаточно видеопамяти (VRAM) для выбранной модели.\n\n"
+                    "Попробуйте:\n"
+                    "1. Выбрать модель поменьше (medium, small)\n"
+                    "2. Закрыть другие GPU-приложения\n"
+                    "3. Отключить диаризацию"
+                )
+
+            self.after(0, self._on_error, error_msg)
 
     def _on_progress(self, progress: PipelineProgress) -> None:
         """Обработчик прогресса (вызывается из фонового потока)."""

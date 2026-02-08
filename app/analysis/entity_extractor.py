@@ -1,7 +1,6 @@
 """Извлечение сущностей и ключевых моментов из транскрипции."""
 
 import json
-import re
 from typing import Any
 
 from app.analysis.analyzer import Highlight, Entity, Entities
