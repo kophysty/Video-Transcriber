@@ -177,6 +177,12 @@ class MainWindow(ctk.CTk):
         )
         manage_btn.pack(side="left")
 
+        model_help_btn = ctk.CTkButton(
+            model_frame, text="?", width=28,
+            command=self._show_model_help,
+        )
+        model_help_btn.pack(side="left", padx=(5, 0))
+
         # Язык
         lang_frame = ctk.CTkFrame(parent, fg_color="transparent")
         lang_frame.pack(fill="x", pady=(0, 10))
@@ -669,6 +675,26 @@ class MainWindow(ctk.CTk):
             self.hf_token_btn.configure(text="HF токен", fg_color=["#3B8ED0", "#1F6AA5"])
         else:
             self.hf_token_btn.configure(text="HF токен", fg_color="gray")
+
+    def _show_model_help(self) -> None:
+        """Показать подсказку по выбору модели."""
+        from app.gui.dialogs import HelpDialog
+
+        HelpDialog(
+            self,
+            title="Выбор модели Whisper",
+            intro=(
+                "Модель выбирается по объёму видеопамяти (VRAM) вашей видеокарты.\n"
+                "Чем больше модель — тем выше качество, но нужно больше VRAM."
+            ),
+            steps=[
+                ("large-v3 (3 GB) — лучшее качество, VRAM 5+ GB", None),
+                ("large-v3-turbo (1.5 GB) — почти как large, в 8x быстрее, VRAM 3+ GB", None),
+                ("medium (1.5 GB) — баланс скорости и качества, VRAM 2.5+ GB", None),
+                ("small (500 MB) — быстрая, хороша для чистого аудио, VRAM 1+ GB", None),
+                ("base / tiny — мгновенные, минимальное качество, любая видеокарта", None),
+            ],
+        )
 
     def _show_hf_help(self) -> None:
         """Показать инструкцию по HuggingFace токену."""
