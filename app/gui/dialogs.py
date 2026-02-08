@@ -2,6 +2,7 @@
 
 import threading
 import tkinter as tk
+import webbrowser
 from tkinter import messagebox
 from typing import Optional
 
@@ -662,3 +663,88 @@ class ApiKeyDialog(ctk.CTkToplevel):
         self.config.anthropic_api_key = ""
         self.config.save()
         self.destroy()
+
+
+class HelpDialog(ctk.CTkToplevel):
+    """Диалог-подсказка с кликабельными ссылками."""
+
+    def __init__(
+        self,
+        parent,
+        title: str,
+        steps: list[tuple[str, Optional[str]]],
+        intro: Optional[str] = None,
+    ):
+        """
+        Args:
+            parent: Родительское окно
+            title: Заголовок окна
+            steps: Список (текст, url_или_None). Если url — делаем кликабельную ссылку.
+            intro: Вводный текст перед шагами (опционально)
+        """
+        super().__init__(parent)
+        self.title(title)
+        self.geometry("480x320")
+        self.resizable(False, False)
+        self.transient(parent)
+        self.grab_set()
+
+        # Контент
+        content = ctk.CTkFrame(self, fg_color="transparent")
+        content.pack(fill="both", expand=True, padx=20, pady=20)
+
+        if intro:
+            intro_label = ctk.CTkLabel(
+                content,
+                text=intro,
+                font=("", 13),
+                wraplength=440,
+                justify="left",
+            )
+            intro_label.pack(anchor="w", pady=(0, 15))
+
+        for i, (text, url) in enumerate(steps, 1):
+            step_frame = ctk.CTkFrame(content, fg_color="transparent")
+            step_frame.pack(fill="x", pady=(0, 8))
+
+            # Номер шага
+            num_label = ctk.CTkLabel(
+                step_frame,
+                text=f"{i}.",
+                font=("", 13, "bold"),
+                width=25,
+            )
+            num_label.pack(side="left", anchor="n")
+
+            # Текст + ссылка
+            text_frame = ctk.CTkFrame(step_frame, fg_color="transparent")
+            text_frame.pack(side="left", fill="x", expand=True)
+
+            desc_label = ctk.CTkLabel(
+                text_frame,
+                text=text,
+                font=("", 13),
+                anchor="w",
+            )
+            desc_label.pack(anchor="w")
+
+            if url:
+                link_label = ctk.CTkLabel(
+                    text_frame,
+                    text=url,
+                    font=("", 12),
+                    text_color=["#1E90FF", "#4DA6FF"],
+                    cursor="hand2",
+                    anchor="w",
+                )
+                link_label.pack(anchor="w")
+                link_label.bind("<Button-1>", lambda e, u=url: webbrowser.open(u))
+
+        # Кнопка OK
+        ok_btn = ctk.CTkButton(
+            content,
+            text="OK",
+            width=100,
+            command=self.destroy,
+        )
+        ok_btn.pack(pady=(15, 0))

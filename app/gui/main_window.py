@@ -672,29 +672,32 @@ class MainWindow(ctk.CTk):
 
     def _show_hf_help(self) -> None:
         """Показать инструкцию по HuggingFace токену."""
-        messagebox.showinfo(
-            "HuggingFace токен — инструкция",
-            "Для диаризации (определение спикеров) нужен токен HuggingFace.\n\n"
-            "Шаги:\n"
-            "1. Зарегистрируйтесь на huggingface.co\n\n"
-            "2. Создайте токен (тип Read):\n"
-            "   huggingface.co/settings/tokens\n\n"
-            "3. Примите лицензию на двух страницах:\n"
-            "   huggingface.co/pyannote/speaker-diarization-3.1\n"
-            "   huggingface.co/pyannote/segmentation-3.0\n\n"
-            "4. Вставьте токен по кнопке «HF токен»"
+        from app.gui.dialogs import HelpDialog
+
+        HelpDialog(
+            self,
+            title="HuggingFace токен — инструкция",
+            steps=[
+                ("Зарегистрируйтесь на HuggingFace", "https://huggingface.co/join"),
+                ("Создайте токен (тип Read)", "https://huggingface.co/settings/tokens"),
+                ("Примите лицензию: speaker-diarization-3.1", "https://huggingface.co/pyannote/speaker-diarization-3.1"),
+                ("Примите лицензию: segmentation-3.0", "https://huggingface.co/pyannote/segmentation-3.0"),
+                ("Вставьте токен по кнопке «HF токен»", None),
+            ],
         )
 
     def _show_api_help(self) -> None:
         """Показать инструкцию по Anthropic API ключу."""
-        messagebox.showinfo(
-            "Anthropic API ключ — инструкция",
-            "API ключ Anthropic нужен ТОЛЬКО для функции\n"
-            "веб-поиска при AI-анализе (опционально).\n\n"
-            "Без ключа AI-анализ работает через Claude CLI.\n\n"
-            "Для получения ключа:\n"
-            "   platform.claude.com/settings/keys\n\n"
-            "Вставьте ключ по кнопке «API ключ»"
+        from app.gui.dialogs import HelpDialog
+
+        HelpDialog(
+            self,
+            title="Anthropic API ключ — инструкция",
+            intro="API ключ нужен ТОЛЬКО для веб-поиска при AI-анализе (опционально).\nБез ключа AI-анализ работает через Claude CLI.",
+            steps=[
+                ("Получите API ключ Anthropic", "https://console.anthropic.com/settings/keys"),
+                ("Вставьте ключ по кнопке «API ключ»", None),
+            ],
         )
 
     def _update_api_key_button(self) -> None:
