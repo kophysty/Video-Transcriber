@@ -16,20 +16,31 @@ def export_md(
     timestamp_interval: int = TIMESTAMP_INTERVAL,
 ) -> None:
     """
-    Экспортировать транскрипцию в читаемый Markdown.
+    Экспортировать транскрипцию в читаемый Markdown (сплошной текст).
 
-    Если есть спикеры (диаризация) — группирует по спикерам,
-    таймкод ставится только при смене спикера.
-
-    Если спикеров нет — сплошной текст,
-    таймкод ставится раз в timestamp_interval секунд.
+    Всегда экспортирует plain-версию без разбивки по спикерам.
+    Для версии с диаризацией используйте export_diarized_md().
     """
-    has_speakers = any(s.speaker for s in transcription.segments)
+    content = _export_plain(transcription, timestamp_interval)
 
-    if has_speakers:
-        content = _export_with_speakers(transcription)
-    else:
-        content = _export_plain(transcription, timestamp_interval)
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(content)
+
+
+def export_diarized_md(
+    transcription: TranscriptionResult,
+    output_path: Path,
+    speaker_map: dict[str, str] | None = None,
+) -> None:
+    """
+    Экспортировать транскрипцию с диаризацией в Markdown.
+
+    Args:
+        transcription: Результат транскрипции с метками спикеров
+        output_path: Путь для сохранения файла
+        speaker_map: Маппинг меток на имена {"SPEAKER_00": "Иван"}
+    """
+    content = _export_with_speakers(transcription, speaker_map)
 
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(content)
@@ -78,10 +89,16 @@ def _export_plain(
     return "\n".join(lines)
 
 
-def _export_with_speakers(transcription: TranscriptionResult) -> str:
+def _export_with_speakers(
+    transcription: TranscriptionResult,
+    speaker_map: dict[str, str] | None = None,
+) -> str:
     """Экспорт с диаризацией: группировка по спикерам."""
+    if speaker_map is None:
+        speaker_map = {}
+
     lines = []
-    lines.append("# Транскрипция\n")
+    lines.append("# Транскрипция по ролям\n")
 
     # Мета
     if transcription.info:
@@ -91,11 +108,20 @@ def _export_with_speakers(transcription: TranscriptionResult) -> str:
         dur_sec = int(dur % 60)
         lines.append(f"*Язык: {lang} · Длительность: {dur_min} мин {dur_sec} сек*\n")
 
-    # Собираем уникальных спикеров
-    speakers = sorted(set(s.speaker for s in transcription.segments if s.speaker))
-    if speakers:
-        lines.append(f"*Спикеры: {len(speakers)}*\n")
+    # Собираем уникальных спикеров и формируем имена
+    raw_speakers = sorted(set(s.speaker for s in transcription.segments if s.speaker))
+    if raw_speakers:
+        speaker_names = []
+        for i, spk in enumerate(raw_speakers):
+            name = speaker_map.get(spk, f"Спикер {i + 1}")
+            speaker_names.append(f"{name} ({spk})" if name != spk else spk)
+        lines.append(f"*Спикеры ({len(raw_speakers)}): {', '.join(speaker_names)}*\n")
     lines.append("---\n")
+
+    # Создаём полный маппинг с фоллбэками
+    display_names: dict[str, str] = {}
+    for i, spk in enumerate(raw_speakers):
+        display_names[spk] = speaker_map.get(spk, f"Спикер {i + 1}")
 
     current_speaker = None
     speaker_texts = []
@@ -112,7 +138,8 @@ def _export_with_speakers(transcription: TranscriptionResult) -> str:
 
             # Новый блок спикера с таймкодом
             ts = seconds_to_txt_timestamp(segment.start)
-            lines.append(f"**{speaker}** {ts}\n")
+            name = display_names.get(speaker, speaker)
+            lines.append(f"**{name}** {ts}\n")
             current_speaker = speaker
 
         speaker_texts.append(segment.text)

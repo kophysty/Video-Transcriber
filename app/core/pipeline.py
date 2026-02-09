@@ -201,6 +201,33 @@ class TranscriptionPipeline:
                 transcription, diarization
             )
 
+            # 4.5. Идентификация спикеров (если диаризация успешна + Claude CLI)
+            speaker_map: dict[str, str] = {}
+            if diarization is not None:
+                from app.analysis.claude_cli import is_claude_available, call_claude
+                if is_claude_available():
+                    try:
+                        from app.analysis.speaker_identifier import identify_speakers
+                        # Подготовка текста с метками спикеров
+                        speaker_lines = []
+                        for seg in transcription.segments:
+                            if seg.speaker:
+                                speaker_lines.append(f"{seg.speaker}: {seg.text}")
+                            else:
+                                speaker_lines.append(seg.text)
+                        speaker_text = "\n".join(speaker_lines)
+
+                        log.info("Идентификация спикеров через Claude CLI...")
+                        speaker_map = identify_speakers(call_claude, speaker_text)
+                        if speaker_map:
+                            log.info("Определены имена спикеров: %s", speaker_map)
+                        else:
+                            log.info("Имена спикеров не удалось определить из контекста")
+                    except Exception as e:
+                        log.warning("Идентификация спикеров пропущена: %s", e)
+                else:
+                    log.info("Claude CLI недоступен, спикеры останутся с метками")
+
             # 5. AI-анализ (опционально, с graceful fallback)
             analysis = None
             if self.config.enable_ai_analysis:
@@ -222,7 +249,7 @@ class TranscriptionPipeline:
             # 6. Экспорт (всегда выполняется если есть транскрипция)
             self._check_cancelled()
             log.info("[5/5] Экспорт результатов...")
-            self._export(transcription, diarization, analysis, input_path, output_dir)
+            self._export(transcription, diarization, analysis, input_path, output_dir, speaker_map)
 
             total_time = time.monotonic() - self._start_time
             log.info("=" * 60)
@@ -323,6 +350,7 @@ class TranscriptionPipeline:
         analysis,  # Optional[AnalysisResult]
         input_path: Path,
         output_dir: Path,
+        speaker_map: dict[str, str] | None = None,
     ) -> None:
         """Экспортировать результаты."""
         self._set_stage("export")
@@ -332,13 +360,23 @@ class TranscriptionPipeline:
         from app.exporters.srt_exporter import export_srt
         from app.exporters.vtt_exporter import export_vtt
         from app.exporters.txt_exporter import export_txt
-        from app.exporters.md_exporter import export_md
+        from app.exporters.md_exporter import export_md, export_diarized_md
 
         base_name = input_path.stem
 
-        # MD (главный читаемый файл)
+        # MD (сплошной текст — всегда)
         export_md(transcription, output_dir / f"{base_name}.md")
         log.info("  Экспорт: %s.md", base_name)
+
+        # Diarized MD (если есть диаризация)
+        if diarization is not None:
+            export_diarized_md(
+                transcription,
+                output_dir / f"{base_name}_diarized.md",
+                speaker_map=speaker_map,
+            )
+            log.info("  Экспорт: %s_diarized.md", base_name)
+
         self._report_progress(0.2, "MD экспортирован")
 
         # JSON
