@@ -14,7 +14,7 @@ from app.utils.config import AppConfig
 from app.utils.ffmpeg_finder import get_audio_duration
 from app.core.audio_extractor import AudioExtractor, is_audio_file
 from app.core.transcriber import Transcriber, TranscriptionResult, create_transcriber_from_config
-from app.core.diarizer import Diarizer, DiarizationResult, create_diarizer_from_config
+from app.core.diarizer import DiarizationResult, create_diarizer_from_config
 from app.core.merger import merge_transcription_with_diarization
 from app.models.gpu_detector import GPUInfo
 
@@ -95,6 +95,7 @@ class TranscriptionPipeline:
         input_path: Path,
         output_dir: Path,
         existing_transcription: Optional['TranscriptionResult'] = None,
+        base_name: Optional[str] = None,
     ) -> PipelineResult:
         """
         Запустить пайплайн.
@@ -104,6 +105,7 @@ class TranscriptionPipeline:
             output_dir: Папка для результатов
             existing_transcription: Если передан — пропускаем транскрибацию,
                                     используем существующий результат
+            base_name: Имя для выходных файлов (если None — берётся из input_path.stem)
         """
         self._cancel_event.clear()
         self._start_time = time.monotonic()
@@ -171,16 +173,25 @@ class TranscriptionPipeline:
                          t_transcribe, len(transcription.segments),
                          transcription.info.language if transcription.info else "?")
 
+                # Раннее сохранение JSON — чтобы при крэше на следующих этапах результат не терялся
+                try:
+                    from app.exporters.json_exporter import export_json
+                    _base = base_name or input_path.stem
+                    export_json(
+                        transcription, None,
+                        output_dir / f"{_base}.json",
+                        source_file=input_path.name,
+                        model=self.config.whisper_model,
+                    )
+                    log.info("Транскрипция сохранена (промежуточно): %s.json", _base)
+                except Exception as e:
+                    log.warning("Не удалось сохранить промежуточный JSON: %s", e)
+
             # 3. Диаризация (опционально, с graceful fallback)
             diarization = None
             if self.config.enable_diarization:
                 self._check_cancelled()
                 log.info("[3/5] Диаризация спикеров...")
-
-                # Управление VRAM: выгружаем Whisper перед диаризацией
-                if not skip_transcription and self.gpu_info and self.gpu_info.vram_total_mb < 8000:
-                    log.info("VRAM < 8 GB, выгружаем Whisper перед диаризацией")
-                    transcriber.unload_model()
 
                 try:
                     t0 = time.monotonic()
@@ -249,7 +260,7 @@ class TranscriptionPipeline:
             # 6. Экспорт (всегда выполняется если есть транскрипция)
             self._check_cancelled()
             log.info("[5/5] Экспорт результатов...")
-            self._export(transcription, diarization, analysis, input_path, output_dir, speaker_map)
+            self._export(transcription, diarization, analysis, input_path, output_dir, speaker_map, base_name)
 
             total_time = time.monotonic() - self._start_time
             log.info("=" * 60)
@@ -318,7 +329,7 @@ class TranscriptionPipeline:
         return result, transcriber
 
     def _diarize(self, audio_path: Path) -> DiarizationResult:
-        """Выполнить диаризацию."""
+        """Выполнить диаризацию (всегда на CPU — безопасно для CUDA)."""
         self._set_stage("diarize")
 
         diarizer = create_diarizer_from_config(
@@ -351,6 +362,7 @@ class TranscriptionPipeline:
         input_path: Path,
         output_dir: Path,
         speaker_map: dict[str, str] | None = None,
+        base_name: Optional[str] = None,
     ) -> None:
         """Экспортировать результаты."""
         self._set_stage("export")
@@ -362,7 +374,7 @@ class TranscriptionPipeline:
         from app.exporters.txt_exporter import export_txt
         from app.exporters.md_exporter import export_md, export_diarized_md
 
-        base_name = input_path.stem
+        base_name = base_name or input_path.stem
 
         # MD (сплошной текст — всегда)
         export_md(transcription, output_dir / f"{base_name}.md")

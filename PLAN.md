@@ -1,4 +1,4 @@
-# Video-Transcribe: План реализации
+# PG-Video-Transcriber: План реализации
 
 ## Стек технологий
 
@@ -15,7 +15,7 @@
 ## Структура проекта
 
 ```
-Video-Transcribe/
+PG-Video-Transcriber/
 ├── main.py                      # Точка входа
 ├── requirements.txt
 ├── config.json                  # Настройки пользователя (создаётся при первом запуске)
@@ -102,7 +102,7 @@ VRAM < 11 GB  → Whisper на GPU, pyannote на CPU
 
 ```
 +--------------------------------------------------+
-|  Video Transcribe                          [_][X] |
+|  PG-Video-Transcriber                          [_][X] |
 +--------------------------------------------------+
 |                                                    |
 |  ВХОДНОЙ ФАЙЛ                                      |

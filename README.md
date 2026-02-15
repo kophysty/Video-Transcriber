@@ -1,4 +1,4 @@
-# Video-Transcriber
+# PG-Video-Transcriber
 
 Локальное приложение для транскрибации видео и аудио файлов с поддержкой диаризации спикеров.
 
@@ -24,8 +24,8 @@
 
 ```bash
 # Клонировать репозиторий
-git clone https://github.com/kophysty/Video-Transcriber.git
-cd Video-Transcriber
+git clone https://github.com/kophysty/PG-Video-Transcriber.git
+cd PG-Video-Transcriber
 
 # Создать виртуальное окружение
 python -m venv .venv

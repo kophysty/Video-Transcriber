@@ -29,3 +29,7 @@ config.json
 *.wav
 *.tmp
 nul
+
+# Logs (игнорируем .log файлы, но сохраняем папку через .gitkeep)
+Logs/*.log
+!Logs/.gitkeep

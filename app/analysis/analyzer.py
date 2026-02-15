@@ -1,11 +1,14 @@
 """Главный класс анализатора транскрипций."""
 
+import json
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, Callable
-import json
 
 from app.core.transcriber import TranscriptionResult
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -47,6 +50,7 @@ class AnalysisResult:
     summary: Summary
     highlights: list[Highlight]
     entities: Entities
+    fact_checks: list = field(default_factory=list)  # list[FactCheckResult]
 
     def to_dict(self) -> dict:
         """Конвертировать в словарь для JSON."""
@@ -78,6 +82,17 @@ class AnalysisResult:
                     for e in self.entities.people
                 ],
             },
+            **({"fact_checks": [
+                {
+                    "claim": fc.claim,
+                    "timestamp": fc.timestamp,
+                    "verdict": fc.verdict,
+                    "confidence": fc.confidence,
+                    "explanation": fc.explanation,
+                    "sources": fc.sources,
+                }
+                for fc in self.fact_checks
+            ]} if self.fact_checks else {}),
         }
 
     def to_markdown(self) -> str:
@@ -128,6 +143,40 @@ class AnalysisResult:
                     if e.context:
                         lines.append(f"  *{e.context}*")
 
+        # Факт-чекинг
+        if self.fact_checks:
+            lines.append("\n## Проверка фактов\n")
+
+            verdict_emoji = {
+                "confirmed": "[OK]",
+                "disputed": "[??]",
+                "unverified": "[--]",
+                "likely_false": "[!!]",
+            }
+            verdict_label = {
+                "confirmed": "Подтверждено",
+                "disputed": "Спорно",
+                "unverified": "Не проверено",
+                "likely_false": "Вероятно неверно",
+            }
+
+            for fc in self.fact_checks:
+                emoji = verdict_emoji.get(fc.verdict, "[--]")
+                label = verdict_label.get(fc.verdict, fc.verdict)
+                confidence_pct = int(fc.confidence * 100)
+
+                lines.append(f"### {emoji} {fc.claim}\n")
+                lines.append(f"- **Таймкод:** {fc.timestamp}")
+                lines.append(f"- **Вердикт:** {label} (уверенность: {confidence_pct}%)")
+                lines.append(f"- **Пояснение:** {fc.explanation}")
+
+                if fc.sources:
+                    lines.append("- **Источники:**")
+                    for src in fc.sources:
+                        lines.append(f"  - {src}")
+
+                lines.append("")
+
         return "\n".join(lines)
 
 
@@ -168,21 +217,32 @@ class TranscriptAnalyzer:
         # Собираем текст транскрипции
         full_text = self._prepare_transcript_text(transcription)
 
-        # Создаём саммари
-        self._report_progress(0.1, "Создание саммари...")
+        # Создаём саммари (0.0 – 0.25)
+        self._report_progress(0.05, "Создание саммари...")
         from app.analysis.summarizer import create_summary
         summary = create_summary(call_claude, full_text)
 
-        # Извлекаем ключевые моменты и сущности
-        self._report_progress(0.4, "Извлечение ключевых моментов...")
+        # Извлекаем ключевые моменты и сущности (0.25 – 0.50)
+        self._report_progress(0.25, "Извлечение ключевых моментов...")
         from app.analysis.entity_extractor import extract_highlights_and_entities
         highlights, entities = extract_highlights_and_entities(
             call_claude, full_text, transcription
         )
 
-        # Ищем ссылки на сервисы
+        # Факт-чекинг (0.50 – 0.75)
+        fact_checks = []
+        self._report_progress(0.50, "Проверка фактов...")
+        try:
+            from app.analysis.fact_checker import fact_check_transcript
+            fact_checks = fact_check_transcript(
+                call_claude, full_text, api_key=api_key
+            )
+        except Exception as e:
+            log.warning("Факт-чекинг не удался: %s", e)
+
+        # Ищем ссылки на сервисы (0.75 – 0.95)
         if resolve_links and (entities.companies or entities.services):
-            self._report_progress(0.7, "Поиск ссылок...")
+            self._report_progress(0.75, "Поиск ссылок...")
             from app.analysis.link_resolver import resolve_entity_links
             entities = resolve_entity_links(
                 call_claude, entities, api_key=api_key
@@ -194,6 +254,7 @@ class TranscriptAnalyzer:
             summary=summary,
             highlights=highlights,
             entities=entities,
+            fact_checks=fact_checks,
         )
 
     def _prepare_transcript_text(self, transcription: TranscriptionResult) -> str:

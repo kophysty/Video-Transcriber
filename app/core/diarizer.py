@@ -24,6 +24,9 @@ CHUNK_SECONDS = 2.0       # Размер окна для извлечения em
 CHUNK_HOP_SECONDS = 1.0   # Шаг между окнами
 MIN_CHUNK_SECONDS = 0.5   # Минимальная длина сегмента
 
+# Лимит окон: для длинных файлов берём не все окна, а с шагом
+MAX_EMBEDDING_WINDOWS = 500   # Максимум окон для кластеризации
+
 
 @dataclass
 class DiarizationSegment:
@@ -41,19 +44,17 @@ class DiarizationResult:
 
 
 class Diarizer:
-    """Диаризатор на основе SpeechBrain ECAPA-TDNN + Silero VAD."""
+    """Диаризатор на основе SpeechBrain ECAPA-TDNN + Silero VAD.
+
+    Всегда работает на CPU — модель маленькая (~25 MB), а CUDA
+    вызывает hard crash на длинных файлах из-за нестабильности драйвера
+    после интенсивной работы Whisper.
+    """
 
     def __init__(
         self,
-        device: str = "cuda",
         progress_callback: Optional[Callable[[float, str], None]] = None,
     ):
-        """
-        Args:
-            device: "cuda" или "cpu"
-            progress_callback: Callback(progress: 0.0-1.0, message: str)
-        """
-        self.device = device
         self.progress_callback = progress_callback
         self._vad_model = None
         self._vad_utils = None
@@ -61,7 +62,11 @@ class Diarizer:
 
     def load_pipeline(self) -> None:
         """Загрузить модели диаризации."""
+        import os
         import torch
+
+        # Подавить предупреждение о symlinks на Windows
+        os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
         self._report_progress(0.0, "Загрузка модели VAD...")
 
@@ -84,35 +89,41 @@ class Diarizer:
         if not hasattr(_ta, 'list_audio_backends'):
             _ta.list_audio_backends = lambda: []
 
+        # Совместимость: SpeechBrain 1.0.3 + huggingface_hub >=1.0:
+        # 1) use_auth_token убран (теперь token)
+        # 2) 404 выбрасывает EntryNotFoundError вместо HTTPError,
+        #    а SpeechBrain ловит только HTTPError → конвертируем обратно
+        import huggingface_hub as _hf_hub
+        from requests.exceptions import HTTPError
+        _original_hf_download = _hf_hub.hf_hub_download
+        def _patched_hf_download(*args, **kwargs):
+            kwargs.pop("use_auth_token", None)
+            try:
+                return _original_hf_download(*args, **kwargs)
+            except _hf_hub.errors.EntryNotFoundError as e:
+                raise HTTPError(f"404 Client Error: {e}") from e
+        _hf_hub.hf_hub_download = _patched_hf_download
+
         from speechbrain.inference.speaker import SpeakerRecognition
+        from speechbrain.utils.fetching import LocalStrategy
 
         models_dir = AppConfig.get_models_dir() / "speechbrain" / "spkrec-ecapa-voxceleb"
-
-        run_opts = {}
-        if self.device == "cuda" and torch.cuda.is_available():
-            run_opts["device"] = "cuda"
 
         self._speaker_model = SpeakerRecognition.from_hparams(
             source="speechbrain/spkrec-ecapa-voxceleb",
             savedir=str(models_dir),
-            run_opts=run_opts,
+            run_opts={"device": "cpu"},
+            local_strategy=LocalStrategy.COPY,  # Windows: symlinks требуют admin
         )
-        log.info("SpeechBrain ECAPA-TDNN загружен, device=%s", self.device)
+        log.info("SpeechBrain ECAPA-TDNN загружен (CPU)")
 
         self._report_progress(0.1, "Модели диаризации загружены")
 
     def unload_pipeline(self) -> None:
-        """Выгрузить модели для освобождения VRAM."""
+        """Выгрузить модели."""
         self._vad_model = None
         self._vad_utils = None
         self._speaker_model = None
-
-        try:
-            import torch
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-        except ImportError:
-            pass
 
     def diarize(
         self,
@@ -134,7 +145,9 @@ class Diarizer:
             DiarizationResult с сегментами и количеством спикеров
         """
         import torch
-        import torchaudio
+        from scipy.io import wavfile as scipy_wav
+        from scipy.signal import resample_poly
+        from math import gcd
 
         if self._vad_model is None:
             self.load_pipeline()
@@ -142,19 +155,30 @@ class Diarizer:
         self._report_progress(0.1, "Загрузка аудио...")
         log.info("Запуск диаризации: %s", audio_path.name)
 
-        # 1. Загрузка аудио
-        waveform, sample_rate = torchaudio.load(str(audio_path))
+        # 1. Загрузка аудио (scipy вместо torchaudio — не требует бэкендов)
+        sample_rate, audio_data = scipy_wav.read(str(audio_path))
+
+        # Конвертация в float32 [-1, 1]
+        if audio_data.dtype == np.int16:
+            audio_data = audio_data.astype(np.float32) / 32768.0
+        elif audio_data.dtype == np.int32:
+            audio_data = audio_data.astype(np.float32) / 2147483648.0
+        elif audio_data.dtype != np.float32:
+            audio_data = audio_data.astype(np.float32)
+
+        # Моно
+        if audio_data.ndim > 1:
+            audio_data = audio_data.mean(axis=1)
 
         # Ресемплинг в 16kHz
         if sample_rate != 16000:
             log.info("Ресемплинг %d -> 16000 Hz", sample_rate)
-            resampler = torchaudio.transforms.Resample(sample_rate, 16000)
-            waveform = resampler(waveform)
+            g = gcd(sample_rate, 16000)
+            audio_data = resample_poly(audio_data, 16000 // g, sample_rate // g)
             sample_rate = 16000
 
-        # Моно
-        if waveform.shape[0] > 1:
-            waveform = waveform.mean(dim=0, keepdim=True)
+        # numpy -> torch tensor [1, samples]
+        waveform = torch.from_numpy(audio_data).unsqueeze(0)
 
         # 2. VAD — определение речевых сегментов
         self._report_progress(0.15, "Определение речевых сегментов (VAD)...")
@@ -238,16 +262,13 @@ class Diarizer:
         """Извлечь speaker embeddings из речевых сегментов."""
         import torch
 
-        windows = []
-        embeddings = []
-
         chunk_samples = int(CHUNK_SECONDS * sample_rate)
         hop_samples = int(CHUNK_HOP_SECONDS * sample_rate)
         min_samples = int(MIN_CHUNK_SECONDS * sample_rate)
 
-        total_ts = len(speech_timestamps)
-
-        for i, ts in enumerate(speech_timestamps):
+        # 1. Сначала собираем ВСЕ окна (без GPU-вычислений)
+        all_windows = []
+        for ts in speech_timestamps:
             start_sample = ts['start']
             end_sample = ts['end']
             duration_samples = end_sample - start_sample
@@ -256,37 +277,44 @@ class Diarizer:
                 continue
 
             if duration_samples <= chunk_samples:
-                # Короткий сегмент — одно окно
-                segment_audio = waveform[:, start_sample:end_sample]
-                with torch.no_grad():
-                    emb = self._speaker_model.encode_batch(segment_audio)
-                embeddings.append(emb.squeeze().cpu().numpy())
-                windows.append({
-                    'start': start_sample / sample_rate,
-                    'end': end_sample / sample_rate,
-                })
+                all_windows.append((start_sample, end_sample))
             else:
-                # Длинный сегмент — разбиваем на окна
                 pos = start_sample
                 while pos + min_samples <= end_sample:
                     window_end = min(pos + chunk_samples, end_sample)
                     if (window_end - pos) < min_samples:
                         break
-
-                    segment_audio = waveform[:, pos:window_end]
-                    with torch.no_grad():
-                        emb = self._speaker_model.encode_batch(segment_audio)
-                    embeddings.append(emb.squeeze().cpu().numpy())
-                    windows.append({
-                        'start': pos / sample_rate,
-                        'end': window_end / sample_rate,
-                    })
+                    all_windows.append((pos, window_end))
                     pos += hop_samples
 
-            # Прогресс по VAD сегментам
-            if i % 10 == 0:
-                progress = 0.25 + 0.50 * (i / total_ts)
-                self._report_progress(progress, f"Embeddings: {len(embeddings)} окон...")
+        log.info("Всего окон для embeddings: %d", len(all_windows))
+
+        # 2. Если окон слишком много — прореживаем равномерно
+        if len(all_windows) > MAX_EMBEDDING_WINDOWS:
+            step = len(all_windows) / MAX_EMBEDDING_WINDOWS
+            indices = [int(i * step) for i in range(MAX_EMBEDDING_WINDOWS)]
+            all_windows = [all_windows[i] for i in indices]
+            log.info("Прореживание до %d окон (длинный файл)", len(all_windows))
+
+        # 3. Извлекаем embeddings (CPU)
+        windows = []
+        embeddings = []
+        total = len(all_windows)
+
+        for i, (start_sample, end_sample) in enumerate(all_windows):
+            segment_audio = waveform[:, start_sample:end_sample]
+            with torch.no_grad():
+                emb = self._speaker_model.encode_batch(segment_audio)
+            embeddings.append(emb.squeeze().numpy())
+            windows.append({
+                'start': start_sample / sample_rate,
+                'end': end_sample / sample_rate,
+            })
+
+            # Прогресс
+            if i % 20 == 0:
+                progress = 0.25 + 0.50 * (i / total)
+                self._report_progress(progress, f"Embeddings: {i + 1}/{total}...")
 
         return windows, embeddings
 
@@ -366,6 +394,5 @@ def create_diarizer_from_config(
 ) -> Diarizer:
     """Создать диаризатор из конфигурации."""
     return Diarizer(
-        device=config.device,
         progress_callback=progress_callback,
     )

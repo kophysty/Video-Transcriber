@@ -1,9 +1,12 @@
 """Поиск ссылок на упомянутые сервисы и компании."""
 
 import json
+import logging
 from typing import Callable, Optional
 
 from app.analysis.analyzer import Entity, Entities
+
+log = logging.getLogger(__name__)
 
 
 def resolve_entity_links(
@@ -14,9 +17,8 @@ def resolve_entity_links(
     """
     Найти ссылки на упомянутые сервисы и компании.
 
-    Если указан api_key — используем Anthropic API с web_search для
-    поиска актуальных URL. Иначе — фоллбэк на запрос из памяти модели
-    через Claude CLI.
+    Если указан api_key — используем Anthropic API с web_search.
+    Иначе — DuckDuckGo (бесплатный, без ключей).
 
     Args:
         call_fn: Функция вызова LLM (prompt -> response text)
@@ -46,20 +48,22 @@ def resolve_entity_links(
     if not items_to_resolve:
         return entities
 
-    # Пробуем web_search через API (если есть ключ), иначе фоллбэк
+    # API key → Anthropic web_search, fallback → DuckDuckGo
     url_map = {}
     if api_key:
         try:
             url_map = _resolve_with_web_search(api_key, items_to_resolve)
-        except Exception:
+        except Exception as e:
+            log.warning("Anthropic web_search не удался: %s, фоллбэк на DuckDuckGo", e)
             try:
-                url_map = _resolve_from_memory(call_fn, items_to_resolve)
+                url_map = _resolve_with_duckduckgo(items_to_resolve)
             except Exception:
                 return entities
     else:
         try:
-            url_map = _resolve_from_memory(call_fn, items_to_resolve)
-        except Exception:
+            url_map = _resolve_with_duckduckgo(items_to_resolve)
+        except Exception as e:
+            log.warning("DuckDuckGo поиск не удался: %s", e)
             return entities
 
     # Применяем найденные URL к сущностям
@@ -97,7 +101,7 @@ def _resolve_with_web_search(
     )
 
     response = client.messages.create(
-        model="claude-sonnet-4-5-20250514",
+        model="claude-sonnet-4-5-20250929",
         max_tokens=1000,
         tools=[{"name": "web_search", "type": "web_search_20250305"}],
         messages=[{"role": "user", "content": prompt}],
@@ -111,27 +115,25 @@ def _resolve_with_web_search(
     return {}
 
 
-def _resolve_from_memory(
-    call_fn: Callable[[str], str],
-    items: list[dict],
-) -> dict[str, str]:
-    """Фоллбэк: запросить URL из памяти модели."""
-    items_json = json.dumps(items, ensure_ascii=False, indent=2)
+def _resolve_with_duckduckgo(items: list[dict]) -> dict[str, str]:
+    """Найти URL через DuckDuckGo (бесплатный поиск)."""
+    from app.analysis.web_search import search_web
 
-    prompt = (
-        f"Для каждого сервиса или компании из списка укажи официальный сайт.\n\n"
-        f"СПИСОК:\n{items_json}\n\n"
-        f"Верни JSON массив в том же порядке:\n"
-        f'[{{"name": "Название", "url": "https://example.com"}}]\n\n'
-        f"Правила:\n"
-        f"- Указывай только официальные сайты\n"
-        f"- Если не уверен в URL — ставь null\n"
-        f"- Не придумывай URL, только известные тебе\n"
-        f"- Отвечай ТОЛЬКО валидным JSON массивом"
-    )
+    url_map = {}
 
-    response = call_fn(prompt)
-    return _parse_urls_to_map(response)
+    for item in items:
+        name = item["name"]
+        query = f"{name} official website"
+
+        results = search_web(query, max_results=3)
+        if results:
+            # Берём первый результат как наиболее релевантный
+            url_map[name.lower()] = results[0].url
+            log.info("DDG: %s → %s", name, results[0].url)
+        else:
+            log.info("DDG: %s → не найден", name)
+
+    return url_map
 
 
 def _parse_urls_to_map(response_text: str) -> dict[str, str]:

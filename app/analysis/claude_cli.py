@@ -12,14 +12,15 @@ log = logging.getLogger(__name__)
 
 def _find_claude_executable() -> str | None:
     """
-    Найти путь к Claude CLI.
+    Найти путь к Claude CLI на любой платформе.
 
-    shutil.which не всегда находит npm-глобальные пакеты на Windows,
-    поэтому проверяем типичные пути вручную.
+    Проверяет PATH и типичные директории npm global install
+    для Windows, macOS и Linux.
     """
-    # 1. Стандартный поиск через PATH
+    # 1. Стандартный поиск через PATH (работает везде если настроен правильно)
     found = shutil.which("claude")
     if found:
+        log.info("Claude CLI найден через PATH: %s", found)
         return found
 
     # 2. Windows: проверяем npm global директорию
@@ -30,9 +31,32 @@ def _find_claude_executable() -> str | None:
             for name in ("claude.cmd", "claude.exe", "claude"):
                 candidate = npm_dir / name
                 if candidate.exists():
-                    log.info("Claude CLI найден: %s", candidate)
+                    log.info("Claude CLI найден (Windows npm): %s", candidate)
                     return str(candidate)
 
+    # 3. macOS/Linux: проверяем типичные пути npm global
+    else:
+        home = Path.home()
+        npm_paths = [
+            Path("/usr/local/bin/claude"),           # npm -g (system-wide)
+            home / ".npm-global/bin/claude",          # custom npm prefix
+            home / ".local/bin/claude",               # local install
+        ]
+
+        # Также проверяем nvm (Node Version Manager)
+        nvm_dir = os.environ.get("NVM_DIR")
+        if nvm_dir:
+            nvm_path = Path(nvm_dir)
+            # Ищем claude в текущей версии node
+            for node_dir in (nvm_path / "versions/node").glob("v*/bin"):
+                npm_paths.append(node_dir / "claude")
+
+        for candidate in npm_paths:
+            if candidate.exists() and candidate.is_file():
+                log.info("Claude CLI найден (Unix npm): %s", candidate)
+                return str(candidate)
+
+    log.warning("Claude CLI не найден в PATH и типичных директориях npm")
     return None
 
 

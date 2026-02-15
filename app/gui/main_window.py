@@ -1,5 +1,6 @@
 """Главное окно приложения."""
 
+import logging
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox
@@ -14,6 +15,8 @@ from app.models.model_manager import ModelManager
 from app.models.model_registry import get_all_models, get_model_info
 from app.core.pipeline import TranscriptionPipeline, PipelineProgress, CancelledException
 from app.core.audio_extractor import is_supported_file
+from app.core.url_downloader import is_url
+from app.version import __version__, __description__
 
 
 # Поддерживаемые форматы файлов
@@ -37,11 +40,74 @@ LANGUAGES = {
 }
 
 
+def _bind_clipboard(entry: ctk.CTkEntry) -> None:
+    """Привязать Ctrl+V/A/C/X и контекстное меню к CTkEntry."""
+    widget = entry._entry  # внутренний tk.Entry
+
+    def _paste(event=None):
+        try:
+            text = widget.clipboard_get()
+        except tk.TclError:
+            return "break"
+        # Если есть выделение — заменяем его
+        try:
+            widget.delete("sel.first", "sel.last")
+        except tk.TclError:
+            pass
+        widget.insert("insert", text)
+        return "break"
+
+    def _copy(event=None):
+        try:
+            text = widget.selection_get()
+            widget.clipboard_clear()
+            widget.clipboard_append(text)
+        except tk.TclError:
+            pass
+        return "break"
+
+    def _cut(event=None):
+        _copy()
+        try:
+            widget.delete("sel.first", "sel.last")
+        except tk.TclError:
+            pass
+        return "break"
+
+    def _select_all(event=None):
+        widget.select_range(0, "end")
+        widget.icursor("end")
+        return "break"
+
+    def _context_menu(event):
+        menu = tk.Menu(widget, tearoff=0)
+        menu.add_command(label="Вырезать", command=_cut)
+        menu.add_command(label="Копировать", command=_copy)
+        menu.add_command(label="Вставить", command=_paste)
+        menu.add_separator()
+        menu.add_command(label="Выделить всё", command=_select_all)
+        menu.tk_popup(event.x_root, event.y_root)
+
+    widget.bind("<Control-v>", _paste)
+    widget.bind("<Control-V>", _paste)
+    widget.bind("<Control-c>", _copy)
+    widget.bind("<Control-C>", _copy)
+    widget.bind("<Control-x>", _cut)
+    widget.bind("<Control-X>", _cut)
+    widget.bind("<Control-a>", _select_all)
+    widget.bind("<Control-A>", _select_all)
+    widget.bind("<Button-3>", _context_menu)
+
+
 class MainWindow(ctk.CTk):
     """Главное окно приложения."""
 
     def __init__(self):
         super().__init__()
+
+        # Logger
+        self.log = logging.getLogger("app.gui")
+        self.log.info("Инициализация главного окна")
 
         # Конфигурация
         self.config = AppConfig.load()
@@ -53,7 +119,7 @@ class MainWindow(ctk.CTk):
         self._processing = False
 
         # Настройка окна
-        self.title("Video Transcriber")
+        self.title("PG-Video-Transcriber")
         self.geometry("600x720")
         self.minsize(500, 660)
 
@@ -72,6 +138,11 @@ class MainWindow(ctk.CTk):
 
         # Закрытие окна
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+        # Обработчик необработанных исключений в GUI
+        self.report_callback_exception = self._handle_gui_exception
+
+        self.log.info("Главное окно готово")
 
     def _detect_gpu(self) -> None:
         """Определить GPU."""
@@ -110,16 +181,20 @@ class MainWindow(ctk.CTk):
         # === Кнопки ===
         self._create_buttons_section(main_frame)
 
+        # === Версия ===
+        self._create_version_label(main_frame)
+
     def _create_input_section(self, parent: ctk.CTkFrame) -> None:
         """Секция выбора входного файла."""
-        label = ctk.CTkLabel(parent, text="ВХОДНОЙ ФАЙЛ", font=("", 12, "bold"))
+        label = ctk.CTkLabel(parent, text="ВХОДНОЙ ФАЙЛ / URL", font=("", 12, "bold"))
         label.pack(anchor="w", pady=(0, 5))
 
         frame = ctk.CTkFrame(parent, fg_color="transparent")
         frame.pack(fill="x", pady=(0, 15))
 
-        self.input_entry = ctk.CTkEntry(frame, placeholder_text="Выберите видео или аудио файл...")
+        self.input_entry = ctk.CTkEntry(frame, placeholder_text="Выберите файл или вставьте ссылку (YouTube, Vimeo, ...)")
         self.input_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        _bind_clipboard(self.input_entry)
 
         browse_btn = ctk.CTkButton(
             frame, text="Обзор", width=80,
@@ -137,6 +212,7 @@ class MainWindow(ctk.CTk):
 
         self.output_entry = ctk.CTkEntry(frame, placeholder_text="Выберите папку для сохранения...")
         self.output_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        _bind_clipboard(self.output_entry)
 
         browse_btn = ctk.CTkButton(
             frame, text="Обзор", width=80,
@@ -222,6 +298,12 @@ class MainWindow(ctk.CTk):
             variable=self.diarization_var,
         )
         self.diarization_check.pack(side="left")
+
+        diar_help_btn = ctk.CTkButton(
+            diar_frame, text="?", width=28,
+            command=self._show_diarization_help,
+        )
+        diar_help_btn.pack(side="left", padx=(5, 0))
 
         # AI-анализ
         ai_frame = ctk.CTkFrame(parent, fg_color="transparent")
@@ -326,6 +408,16 @@ class MainWindow(ctk.CTk):
         # Кнопка отмены изначально скрыта
         self.cancel_btn.pack_forget()
 
+    def _create_version_label(self, parent: ctk.CTkFrame) -> None:
+        """Версия приложения внизу окна."""
+        version_label = ctk.CTkLabel(
+            parent,
+            text=f"{__description__}  ·  v{__version__}",
+            font=("", 10),
+            text_color="gray",
+        )
+        version_label.pack(anchor="center", pady=(10, 0))
+
     def _browse_input(self) -> None:
         """Выбрать входной файл."""
         initial_dir = self.config.last_input_dir or str(Path.home())
@@ -394,17 +486,20 @@ class MainWindow(ctk.CTk):
         model_name = self.model_var.get()
         skip_transcription = not self.transcription_var.get()
 
+        is_url_input = is_url(input_path)
+
         if not input_path:
-            messagebox.showerror("Ошибка", "Выберите входной файл")
+            messagebox.showerror("Ошибка", "Выберите входной файл или вставьте URL")
             return
 
-        if not Path(input_path).exists():
-            messagebox.showerror("Ошибка", f"Файл не найден: {input_path}")
-            return
+        if not is_url_input:
+            if not Path(input_path).exists():
+                messagebox.showerror("Ошибка", f"Файл не найден: {input_path}")
+                return
 
-        if not is_supported_file(Path(input_path)):
-            messagebox.showerror("Ошибка", "Неподдерживаемый формат файла")
-            return
+            if not is_supported_file(Path(input_path)):
+                messagebox.showerror("Ошибка", "Неподдерживаемый формат файла")
+                return
 
         if not output_dir:
             messagebox.showerror("Ошибка", "Выберите папку для результатов")
@@ -419,8 +514,16 @@ class MainWindow(ctk.CTk):
                 )
                 return
 
-        # Если транскрибация выключена — нужен существующий JSON
+        # Если транскрибация выключена — нужен существующий JSON (не для URL)
         existing_transcription = None
+        if skip_transcription and is_url_input:
+            messagebox.showerror(
+                "Ошибка",
+                "Повторная обработка не поддерживается для URL.\n"
+                "Включите транскрибацию или укажите локальный файл."
+            )
+            return
+
         if skip_transcription:
             if not self.diarization_var.get() and not self.ai_analysis_var.get():
                 messagebox.showerror(
@@ -464,19 +567,59 @@ class MainWindow(ctk.CTk):
         # Запускаем в фоновом потоке
         thread = threading.Thread(
             target=self._run_pipeline,
-            args=(Path(input_path), Path(output_dir), existing_transcription),
+            args=(
+                Path(input_path) if not is_url_input else None,
+                Path(output_dir),
+                existing_transcription,
+                input_path if is_url_input else None,
+            ),
             daemon=True,
         )
         thread.start()
 
     def _run_pipeline(
         self,
-        input_path: Path,
+        input_path: Optional[Path],
         output_dir: Path,
         existing_transcription=None,
+        url: Optional[str] = None,
     ) -> None:
         """Запустить пайплайн (в фоновом потоке)."""
+        download_result = None
         try:
+            # Если URL — сначала скачиваем
+            base_name = None
+            if url:
+                from app.core.url_downloader import download_audio
+                from app.utils.ffmpeg_finder import find_ffmpeg
+
+                self.after(0, self._update_progress, PipelineProgress(
+                    stage="download",
+                    stage_progress=0.0,
+                    total_progress=0.0,
+                    message="Подготовка к скачиванию...",
+                ))
+
+                ffmpeg_path = find_ffmpeg()
+                ffmpeg_str = str(ffmpeg_path) if ffmpeg_path else None
+
+                def download_progress(progress: float, message: str) -> None:
+                    self.after(0, self._update_progress, PipelineProgress(
+                        stage="download",
+                        stage_progress=progress,
+                        total_progress=progress * 0.15,  # скачивание — ~15% от общего
+                        message=message,
+                    ))
+
+                download_result = download_audio(
+                    url=url,
+                    output_dir=output_dir,
+                    ffmpeg_path=ffmpeg_str,
+                    progress_callback=download_progress,
+                )
+                input_path = download_result.audio_path
+                base_name = download_result.title
+
             self._pipeline = TranscriptionPipeline(
                 config=self.config,
                 gpu_info=self.gpu_info,
@@ -486,12 +629,16 @@ class MainWindow(ctk.CTk):
             result = self._pipeline.run(
                 input_path, output_dir,
                 existing_transcription=existing_transcription,
+                base_name=base_name,
             )
 
             # Успех
+            self.log.info("Pipeline завершен успешно, вызываем _on_complete через after()")
             self.after(0, self._on_complete, result)
+            self.log.info("after() для _on_complete запланирован")
 
         except CancelledException:
+            self.log.info("Pipeline отменен, вызываем _on_cancelled")
             self.after(0, self._on_cancelled)
 
         except Exception as e:
@@ -508,7 +655,30 @@ class MainWindow(ctk.CTk):
                     "3. Отключить диаризацию"
                 )
 
+            # Ошибки скачивания
+            download_keywords = ["DownloadError", "is not a valid URL", "Unsupported URL", "Video unavailable", "Private video"]
+            if any(kw.lower() in error_msg.lower() for kw in download_keywords):
+                error_msg = (
+                    f"Ошибка скачивания:\n{error_msg}\n\n"
+                    "Проверьте:\n"
+                    "1. URL правильный и видео доступно\n"
+                    "2. Видео не приватное\n"
+                    "3. yt-dlp установлен (pip install yt-dlp)"
+                )
+
+            self.log.error(f"Pipeline ошибка, вызываем _on_error: {error_msg}")
             self.after(0, self._on_error, error_msg)
+
+        finally:
+            # Очистка скачанного WAV файла (для URL)
+            if download_result and download_result.audio_path.exists():
+                try:
+                    download_result.audio_path.unlink()
+                    self.log.info("Скачанный WAV файл удален (URL)")
+                except Exception:
+                    pass
+
+            self.log.info("Фоновый поток _run_pipeline завершается")
 
     def _on_progress(self, progress: PipelineProgress) -> None:
         """Обработчик прогресса (вызывается из фонового потока)."""
@@ -520,6 +690,7 @@ class MainWindow(ctk.CTk):
 
         # Названия этапов для отображения
         stage_names = {
+            "download": "Скачивание",
             "extract": "Извлечение аудио",
             "transcribe": "Транскрибация",
             "diarize": "Диаризация",
@@ -544,54 +715,69 @@ class MainWindow(ctk.CTk):
 
     def _on_complete(self, result) -> None:
         """Обработчик успешного завершения."""
-        self._set_processing(False)
-        self.progress_bar.set(1.0)
-        self.time_label.configure(text="")
+        self.log.info("GUI: _on_complete вызван")
 
-        from app.utils.formats import format_duration
-        duration_str = format_duration(result.duration)
+        try:
+            self._set_processing(False)
+            self.progress_bar.set(1.0)
+            self.time_label.configure(text="")
+            self.log.info("GUI: UI обновлен (прогресс сброшен)")
 
-        # Формируем сообщение
-        message = (
-            f"Обработка завершена!\n\n"
-            f"Длительность: {duration_str}\n"
-            f"Сегментов: {len(result.transcription.segments)}\n"
-            f"Язык: {result.transcription.info.language if result.transcription.info else '?'}\n"
-        )
+            from app.utils.formats import format_duration
+            duration_str = format_duration(result.duration)
 
-        # Добавляем инфо об AI-анализе если был
-        if result.analysis:
-            message += f"\nAI-анализ: выполнен\n"
-            if result.analysis.summary.one_liner:
-                message += f"\n{result.analysis.summary.one_liner}\n"
+            # Формируем сообщение
+            message = (
+                f"Обработка завершена!\n\n"
+                f"Длительность: {duration_str}\n"
+                f"Сегментов: {len(result.transcription.segments)}\n"
+                f"Язык: {result.transcription.info.language if result.transcription.info else '?'}\n"
+            )
 
-        # Предупреждения (пропущенные этапы)
-        if result.warnings:
-            message += f"\nПредупреждения:\n"
-            for w in result.warnings:
-                message += f"  - {w}\n"
+            # Добавляем инфо об AI-анализе если был
+            if result.analysis:
+                message += f"\nAI-анализ: выполнен\n"
+                if result.analysis.summary.one_liner:
+                    message += f"\n{result.analysis.summary.one_liner}\n"
 
-        message += f"\nРезультаты сохранены в:\n{result.output_dir}"
+            # Предупреждения (пропущенные этапы)
+            if result.warnings:
+                message += f"\nПредупреждения:\n"
+                for w in result.warnings:
+                    message += f"  - {w}\n"
 
-        messagebox.showinfo("Готово", message)
+            message += f"\nРезультаты сохранены в:\n{result.output_dir}"
 
-        self.status_label.configure(text="Готово!")
+            self.log.info("GUI: Показываем messagebox 'Готово'")
+            messagebox.showinfo("Готово", message)
+            self.log.info("GUI: Messagebox закрыт пользователем")
+
+            self.status_label.configure(text="Готово!")
+            self.log.info("GUI: _on_complete завершен успешно")
+
+        except Exception as e:
+            self.log.error(f"GUI: ОШИБКА в _on_complete: {e}", exc_info=True)
 
     def _on_cancelled(self) -> None:
         """Обработчик отмены."""
+        self.log.info("GUI: _on_cancelled вызван")
         self._set_processing(False)
         self.progress_bar.set(0)
         self.time_label.configure(text="")
         self.status_label.configure(text="Отменено")
+        self.log.info("GUI: _on_cancelled завершен")
 
     def _on_error(self, error_msg: str) -> None:
         """Обработчик ошибки."""
+        self.log.error(f"GUI: _on_error вызван: {error_msg}")
         self._set_processing(False)
         self.progress_bar.set(0)
         self.time_label.configure(text="")
         self.status_label.configure(text="Ошибка")
 
+        self.log.info("GUI: Показываем messagebox 'Ошибка'")
         messagebox.showerror("Ошибка", f"Произошла ошибка:\n\n{error_msg}")
+        self.log.info("GUI: _on_error завершен")
 
     def _cancel_transcription(self) -> None:
         """Отменить транскрибацию."""
@@ -663,6 +849,8 @@ class MainWindow(ctk.CTk):
 
     def _on_close(self) -> None:
         """Обработчик закрытия окна."""
+        self.log.info("Закрытие приложения (пользователь закрыл окно)")
+
         # Сохраняем настройки
         self.config.whisper_model = self.model_var.get()
         self.config.language = LANGUAGES.get(self.lang_var.get(), "auto")
@@ -672,9 +860,30 @@ class MainWindow(ctk.CTk):
 
         # Отменяем обработку если идёт
         if self._pipeline:
+            self.log.info("Отмена активной обработки перед закрытием")
             self._pipeline.cancel()
 
+        self.log.info("Приложение закрыто нормально")
         self.destroy()
+
+    def _handle_gui_exception(self, exc_type, exc_value, exc_traceback):
+        """Обработчик необработанных исключений в GUI."""
+        import traceback
+
+        # Форматируем traceback
+        tb_lines = traceback.format_exception(exc_type, exc_value, exc_traceback)
+        tb_text = "".join(tb_lines)
+
+        # Логируем
+        self.log.error(f"Необработанное исключение в GUI:\n{tb_text}")
+
+        # Показываем пользователю
+        messagebox.showerror(
+            "Непредвиденная ошибка",
+            f"Произошла непредвиденная ошибка в интерфейсе:\n\n{exc_value}\n\n"
+            f"Информация сохранена в логах (папка Logs/).\n"
+            f"Пожалуйста, отправьте лог-файл разработчику."
+        )
 
     def _on_transcription_toggle(self) -> None:
         """Обработчик переключения транскрибации."""
@@ -719,6 +928,26 @@ class MainWindow(ctk.CTk):
         self.wait_window(dialog)
 
         self._update_api_key_button()
+
+    def _show_diarization_help(self) -> None:
+        """Показать подсказку по диаризации."""
+        from app.gui.dialogs import HelpDialog
+
+        HelpDialog(
+            self,
+            title="Диаризация спикеров — когда включать?",
+            intro=(
+                "Диаризация определяет, кто из спикеров говорит в каждый момент.\n"
+                "Она требует дополнительных ресурсов (VRAM, время) и не всегда нужна."
+            ),
+            steps=[
+                ("Включайте для: интервью, подкасты, совещания, дискуссии — "
+                 "где важно различать нескольких говорящих", None),
+                ("Отключайте для: гайды, лекции, презентации, монологи — "
+                 "где говорит один человек или разделение по ролям не важно", None),
+                ("Ресурсы: занимает ~500 MB VRAM и добавляет время обработки", None),
+            ],
+        )
 
     def _show_model_help(self) -> None:
         """Показать подсказку по выбору модели."""
