@@ -2,6 +2,7 @@
 
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
@@ -127,59 +128,116 @@ def _search_with_duckduckgo(claims: list[dict]) -> list[dict]:
 
 
 def _search_with_anthropic(claims: list[dict], api_key: str) -> list[dict]:
-    """Поиск доказательств через Anthropic web_search. При ошибке API — fallback на DDG."""
+    """Поиск доказательств через Anthropic web_search с защитой от rate limit.
+
+    Rate limit Anthropic API: 30K input tokens/min.
+    Стратегия:
+    - Пауза между запросами (_DELAY_BETWEEN сек)
+    - При 429: ожидание _RATE_LIMIT_PAUSE сек с повтором до _MAX_RETRIES раз
+    - При исчерпании повторов: fallback на DDG для конкретного claim
+    """
     try:
         from anthropic import Anthropic
-        client = Anthropic(api_key=api_key)
+        # Отключаем встроенные retry SDK — они слишком быстрые для rate limit
+        client = Anthropic(api_key=api_key, max_retries=0)
     except Exception as e:
         log.warning("Anthropic API недоступен для факт-чекинга: %s, фоллбэк на DDG", e)
         return _search_with_duckduckgo(claims)
 
-    # Пробуем первый запрос — если API не работает, сразу переключаемся на DDG
+    _DELAY_BETWEEN = 3.0       # пауза между запросами (сек)
+    _RATE_LIMIT_PAUSE = 30.0   # пауза при rate limit (сек)
+    _MAX_RETRIES = 2           # макс повторов при rate limit на один запрос
+
     first_claim = True
-    for claim in claims:
+    for i, claim in enumerate(claims):
         query = claim.get("search_query", claim.get("claim", ""))
         if not query:
             claim["evidence"] = []
             continue
 
-        try:
-            response = client.messages.create(
-                model="claude-sonnet-4-5-20250929",
-                max_tokens=500,
-                tools=[{"name": "web_search", "type": "web_search_20250305"}],
-                messages=[{
-                    "role": "user",
-                    "content": (
-                        f"Search for evidence about this claim: {query}\n"
-                        f"Return 2-3 key findings as a JSON array:\n"
-                        f'[{{"title": "...", "url": "...", "snippet": "..."}}]\n'
-                        f"Only valid JSON array."
-                    ),
-                }],
-            )
+        # Пауза между запросами (кроме первого)
+        if not first_claim:
+            time.sleep(_DELAY_BETWEEN)
 
-            evidence = []
-            for block in response.content:
-                if hasattr(block, "text"):
-                    parsed = _parse_json_array(block.text)
-                    evidence = [
-                        {"title": e.get("title", ""), "url": e.get("url", ""), "snippet": e.get("snippet", "")}
-                        for e in parsed
-                    ]
-                    break
+        success = False
+        for attempt in range(_MAX_RETRIES + 1):
+            try:
+                response = client.messages.create(
+                    model="claude-sonnet-4-5-20250929",
+                    max_tokens=500,
+                    tools=[{"name": "web_search", "type": "web_search_20250305"}],
+                    messages=[{
+                        "role": "user",
+                        "content": (
+                            f"Search for evidence about this claim: {query}\n"
+                            f"Return 2-3 key findings as a JSON array:\n"
+                            f'[{{"title": "...", "url": "...", "snippet": "..."}}]\n'
+                            f"Only valid JSON array."
+                        ),
+                    }],
+                )
 
-            claim["evidence"] = evidence
+                evidence = []
+                for block in response.content:
+                    if hasattr(block, "text"):
+                        parsed = _parse_json_array(block.text)
+                        evidence = [
+                            {"title": e.get("title", ""), "url": e.get("url", ""), "snippet": e.get("snippet", "")}
+                            for e in parsed
+                        ]
+                        break
+
+                claim["evidence"] = evidence
+                success = True
+                first_claim = False
+                break
+
+            except Exception as e:
+                is_rate_limit = "rate_limit" in str(e) or "429" in str(e)
+
+                # Первый запрос и не rate limit → API вообще не работает
+                if first_claim and not is_rate_limit:
+                    log.warning("Anthropic API ошибка: %s — переключаюсь на DuckDuckGo для всех claims", e)
+                    return _search_with_duckduckgo(claims)
+
+                # Rate limit — ждём и повторяем
+                if is_rate_limit and attempt < _MAX_RETRIES:
+                    wait = _RATE_LIMIT_PAUSE * (attempt + 1)
+                    log.warning("Rate limit для '%s', пауза %d сек (попытка %d/%d)...",
+                                query[:60], int(wait), attempt + 1, _MAX_RETRIES)
+                    time.sleep(wait)
+                    continue
+
+                log.warning("Anthropic поиск не удался для '%s': %s", query, e)
+                break
+
+        # Если Anthropic не справился — DDG fallback для этого claim
+        if not success:
+            _ddg_fallback_single(claim)
             first_claim = False
 
-        except Exception as e:
-            if first_claim:
-                log.warning("Anthropic API ошибка: %s — переключаюсь на DuckDuckGo для всех claims", e)
-                return _search_with_duckduckgo(claims)
-            log.warning("Anthropic поиск не удался для '%s': %s", query, e)
-            claim["evidence"] = []
-
     return claims
+
+
+def _ddg_fallback_single(claim: dict) -> None:
+    """DDG fallback для одного claim, когда Anthropic недоступен."""
+    from app.analysis.web_search import search_web
+
+    query = claim.get("search_query", claim.get("claim", ""))
+    if not query:
+        claim["evidence"] = []
+        return
+
+    try:
+        results = search_web(query, max_results=3)
+        claim["evidence"] = [
+            {"title": r.title, "url": r.url, "snippet": r.snippet}
+            for r in results
+        ]
+        log.info("DDG fallback для '%s': %d результатов", query[:60], len(results))
+    except Exception as e:
+        log.warning("DDG fallback не удался для '%s': %s", query[:60], e)
+        claim["evidence"] = []
 
 
 def _synthesize_verdicts(

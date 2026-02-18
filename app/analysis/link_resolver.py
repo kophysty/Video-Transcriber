@@ -2,6 +2,7 @@
 
 import json
 import logging
+import time
 from typing import Callable, Optional
 
 from app.analysis.analyzer import Entity, Entities
@@ -84,35 +85,65 @@ def _resolve_with_web_search(
     api_key: str,
     items: list[dict],
 ) -> dict[str, str]:
-    """Найти URL через веб-поиск Claude API."""
+    """Найти URL через веб-поиск Claude API с защитой от rate limit."""
     from anthropic import Anthropic
 
-    client = Anthropic(api_key=api_key)
-    items_json = json.dumps(items, ensure_ascii=False, indent=2)
+    client = Anthropic(api_key=api_key, max_retries=0)
 
-    prompt = (
-        f"Найди официальные сайты для каждого сервиса/компании из списка.\n\n"
-        f"СПИСОК:\n{items_json}\n\n"
-        f"Для каждого элемента найди через поиск их официальный сайт.\n"
-        f"Верни JSON массив:\n"
-        f'[{{"name": "Название", "url": "https://..."}}]\n\n'
-        f"Если не нашёл сайт — ставь url: null.\n"
-        f"Отвечай ТОЛЬКО валидным JSON массивом."
-    )
+    _RATE_LIMIT_PAUSE = 30.0   # пауза при rate limit (сек)
+    _MAX_RETRIES = 2           # макс повторов при rate limit
 
-    response = client.messages.create(
-        model="claude-sonnet-4-5-20250929",
-        max_tokens=1000,
-        tools=[{"name": "web_search", "type": "web_search_20250305"}],
-        messages=[{"role": "user", "content": prompt}],
-    )
+    # Разбиваем на батчи по 5 сущностей, чтобы не превышать лимит токенов
+    _BATCH_SIZE = 5
+    _DELAY_BETWEEN_BATCHES = 5.0  # пауза между батчами (сек)
 
-    # Извлекаем текстовый ответ
-    for block in response.content:
-        if hasattr(block, "text"):
-            return _parse_urls_to_map(block.text)
+    all_results = {}
+    for batch_start in range(0, len(items), _BATCH_SIZE):
+        batch = items[batch_start:batch_start + _BATCH_SIZE]
 
-    return {}
+        # Пауза между батчами (кроме первого)
+        if batch_start > 0:
+            time.sleep(_DELAY_BETWEEN_BATCHES)
+
+        items_json = json.dumps(batch, ensure_ascii=False, indent=2)
+        prompt = (
+            f"Найди официальные сайты для каждого сервиса/компании из списка.\n\n"
+            f"СПИСОК:\n{items_json}\n\n"
+            f"Для каждого элемента найди через поиск их официальный сайт.\n"
+            f"Верни JSON массив:\n"
+            f'[{{"name": "Название", "url": "https://..."}}]\n\n'
+            f"Если не нашёл сайт — ставь url: null.\n"
+            f"Отвечай ТОЛЬКО валидным JSON массивом."
+        )
+
+        for attempt in range(_MAX_RETRIES + 1):
+            try:
+                response = client.messages.create(
+                    model="claude-sonnet-4-5-20250929",
+                    max_tokens=1000,
+                    tools=[{"name": "web_search", "type": "web_search_20250305"}],
+                    messages=[{"role": "user", "content": prompt}],
+                )
+
+                for block in response.content:
+                    if hasattr(block, "text"):
+                        all_results.update(_parse_urls_to_map(block.text))
+                        break
+                break  # успех — выходим из retry
+
+            except Exception as e:
+                is_rate_limit = "rate_limit" in str(e) or "429" in str(e)
+
+                if is_rate_limit and attempt < _MAX_RETRIES:
+                    wait = _RATE_LIMIT_PAUSE * (attempt + 1)
+                    log.warning("Rate limit (link resolver), пауза %d сек (попытка %d/%d)...",
+                                int(wait), attempt + 1, _MAX_RETRIES)
+                    time.sleep(wait)
+                    continue
+
+                raise  # re-raise — внешний код сделает fallback на DDG
+
+    return all_results
 
 
 def _resolve_with_duckduckgo(items: list[dict]) -> dict[str, str]:
