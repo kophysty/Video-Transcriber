@@ -5,6 +5,20 @@ import logging
 import sys
 from pathlib import Path
 
+# Workaround: platform.uname() зависает на Windows, т.к. внутри вызывает
+# _syscmd_ver() → subprocess (cmd /c ver). Заполняем кэш через sys.getwindowsversion().
+if sys.platform == "win32":
+    import os
+    import platform
+    _wv = sys.getwindowsversion()
+    platform._uname_cache = platform.uname_result(
+        system="Windows",
+        node=os.environ.get("COMPUTERNAME", ""),
+        release="11" if _wv.build >= 22000 else "10",
+        version=f"{_wv.major}.{_wv.minor}.{_wv.build}",
+        machine=os.environ.get("PROCESSOR_ARCHITECTURE", "AMD64"),
+    )
+
 # Добавляем корень проекта в путь
 project_root = Path(__file__).parent
 if str(project_root) not in sys.path:

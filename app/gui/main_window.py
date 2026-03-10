@@ -563,6 +563,8 @@ class MainWindow(ctk.CTk):
 
         # Переключаем UI
         self._set_processing(True)
+        self.status_label.configure(text="Запуск обработки...")
+        self.progress_bar.set(0.0)
 
         # Запускаем в фоновом потоке
         thread = threading.Thread(

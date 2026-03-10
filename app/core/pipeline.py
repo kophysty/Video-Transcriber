@@ -57,8 +57,8 @@ class TranscriptionPipeline:
     1. Извлечение аудио (10%)
     2. Транскрибация (50%)
     3. Диаризация (15%, опционально)
-    4. AI-анализ (15%, опционально)
-    5. Экспорт (10%)
+    4. Экспорт (10%) — ранний, до AI-анализа
+    5. AI-анализ (15%, опционально)
     """
 
     # Веса этапов для общего прогресса
@@ -239,28 +239,35 @@ class TranscriptionPipeline:
                 else:
                     log.info("Claude CLI недоступен, спикеры останутся с метками")
 
-            # 5. AI-анализ (опционально, с graceful fallback)
+            # 5. Ранний экспорт транскрипции (до AI-анализа — чтобы результаты
+            #    были на диске даже если анализ зависнет или упадёт)
+            self._check_cancelled()
+            log.info("[4/5] Экспорт транскрипции...")
+            self._export(transcription, diarization, None, input_path, output_dir, speaker_map, base_name)
+
+            # 6. AI-анализ (опционально, с graceful fallback)
             analysis = None
             if self.config.enable_ai_analysis:
                 self._check_cancelled()
-                log.info("[4/5] AI-анализ...")
+                log.info("[5/5] AI-анализ...")
                 try:
                     t0 = time.monotonic()
                     analysis = self._analyze(transcription)
                     t_analyze = time.monotonic() - t0
-                    log.info("[4/5] AI-анализ завершён за %.1f сек", t_analyze)
+                    log.info("[5/5] AI-анализ завершён за %.1f сек", t_analyze)
+
+                    # Дополняем экспорт файлами анализа
+                    from app.analysis.analyzer import export_analysis
+                    _base = base_name or input_path.stem
+                    export_analysis(analysis, output_dir, _base)
+                    log.info("  Экспорт: %s_analysis.json + .md", _base)
                 except Exception as e:
                     warn_msg = f"AI-анализ пропущен: {e}"
                     warnings.append(warn_msg)
-                    log.warning("[4/5] %s", warn_msg)
+                    log.warning("[5/5] %s", warn_msg)
                     self._report_progress(1.0, f"AI-анализ пропущен: ошибка")
             else:
-                log.info("[4/5] AI-анализ отключён, пропускаем")
-
-            # 6. Экспорт (всегда выполняется если есть транскрипция)
-            self._check_cancelled()
-            log.info("[5/5] Экспорт результатов...")
-            self._export(transcription, diarization, analysis, input_path, output_dir, speaker_map, base_name)
+                log.info("[5/5] AI-анализ отключён, пропускаем")
 
             total_time = time.monotonic() - self._start_time
             log.info("=" * 60)
@@ -416,14 +423,7 @@ class TranscriptionPipeline:
         log.info("  Экспорт: %s.txt", base_name)
         self._report_progress(0.8, "TXT экспортирован")
 
-        # AI Analysis (если есть)
-        if analysis:
-            from app.analysis.analyzer import export_analysis
-            export_analysis(analysis, output_dir, base_name)
-            log.info("  Экспорт: %s_analysis.json + .md", base_name)
-            self._report_progress(1.0, "Анализ экспортирован")
-        else:
-            self._report_progress(1.0, "Экспорт завершён")
+        self._report_progress(1.0, "Экспорт завершён")
 
     def _set_stage(self, stage: str) -> None:
         """Установить текущий этап."""

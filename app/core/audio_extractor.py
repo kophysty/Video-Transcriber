@@ -63,13 +63,13 @@ class AudioExtractor:
             tmp.close()
             output_path = Path(tmp.name)
 
+        self._report_progress(0.0, "Извлечение аудио...")
+
         # Получаем длительность для прогресса
         duration = get_audio_duration(input_path)
 
         # Строим команду FFmpeg
         cmd = self._build_ffmpeg_command(input_path, output_path)
-
-        self._report_progress(0.0, "Извлечение аудио...")
 
         # Запускаем FFmpeg
         process = subprocess.Popen(

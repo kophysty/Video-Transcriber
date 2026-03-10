@@ -128,17 +128,16 @@ def _search_with_duckduckgo(claims: list[dict]) -> list[dict]:
 
 
 def _search_with_anthropic(claims: list[dict], api_key: str) -> list[dict]:
-    """Поиск доказательств через Anthropic web_search с защитой от rate limit.
+    """Поиск доказательств через Anthropic web_search с circuit breaker.
 
-    Rate limit Anthropic API: 30K input tokens/min.
     Стратегия:
-    - Пауза между запросами (_DELAY_BETWEEN сек)
+    - Timeout на каждый API-запрос (_API_TIMEOUT сек)
     - При 429: ожидание _RATE_LIMIT_PAUSE сек с повтором до _MAX_RETRIES раз
-    - При исчерпании повторов: fallback на DDG для конкретного claim
+    - Circuit breaker: после _CB_THRESHOLD подряд неудач → DDG для всех оставшихся
+    - При не-rate-limit ошибке на первом запросе → сразу DDG для всех
     """
     try:
         from anthropic import Anthropic
-        # Отключаем встроенные retry SDK — они слишком быстрые для rate limit
         client = Anthropic(api_key=api_key, max_retries=0)
     except Exception as e:
         log.warning("Anthropic API недоступен для факт-чекинга: %s, фоллбэк на DDG", e)
@@ -147,13 +146,25 @@ def _search_with_anthropic(claims: list[dict], api_key: str) -> list[dict]:
     _DELAY_BETWEEN = 3.0       # пауза между запросами (сек)
     _RATE_LIMIT_PAUSE = 30.0   # пауза при rate limit (сек)
     _MAX_RETRIES = 2           # макс повторов при rate limit на один запрос
+    _API_TIMEOUT = 60.0        # таймаут на один API-запрос (сек)
+    _CB_THRESHOLD = 2          # circuit breaker: сколько подряд неудач до переключения на DDG
 
     first_claim = True
+    consecutive_failures = 0
+
     for i, claim in enumerate(claims):
         query = claim.get("search_query", claim.get("claim", ""))
         if not query:
             claim["evidence"] = []
             continue
+
+        # Circuit breaker: слишком много подряд неудач → DDG для оставшихся
+        if consecutive_failures >= _CB_THRESHOLD:
+            log.warning("Circuit breaker: %d подряд неудач Anthropic, переключаюсь на DDG для оставшихся %d claims",
+                        consecutive_failures, len(claims) - i)
+            for remaining_claim in claims[i:]:
+                _ddg_fallback_single(remaining_claim)
+            return claims
 
         # Пауза между запросами (кроме первого)
         if not first_claim:
@@ -165,6 +176,7 @@ def _search_with_anthropic(claims: list[dict], api_key: str) -> list[dict]:
                 response = client.messages.create(
                     model="claude-sonnet-4-5-20250929",
                     max_tokens=500,
+                    timeout=_API_TIMEOUT,
                     tools=[{"name": "web_search", "type": "web_search_20250305"}],
                     messages=[{
                         "role": "user",
@@ -190,6 +202,7 @@ def _search_with_anthropic(claims: list[dict], api_key: str) -> list[dict]:
                 claim["evidence"] = evidence
                 success = True
                 first_claim = False
+                consecutive_failures = 0
                 break
 
             except Exception as e:
@@ -208,11 +221,13 @@ def _search_with_anthropic(claims: list[dict], api_key: str) -> list[dict]:
                     time.sleep(wait)
                     continue
 
-                log.warning("Anthropic поиск не удался для '%s': %s", query, e)
+                log.warning("Anthropic поиск не удался для '%s': %s", query[:60], e)
                 break
 
-        # Если Anthropic не справился — DDG fallback для этого claim
-        if not success:
+        if success:
+            consecutive_failures = 0
+        else:
+            consecutive_failures += 1
             _ddg_fallback_single(claim)
             first_claim = False
 

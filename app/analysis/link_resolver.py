@@ -92,6 +92,7 @@ def _resolve_with_web_search(
 
     _RATE_LIMIT_PAUSE = 30.0   # пауза при rate limit (сек)
     _MAX_RETRIES = 2           # макс повторов при rate limit
+    _API_TIMEOUT = 60.0        # таймаут на один API-запрос (сек)
 
     # Разбиваем на батчи по 5 сущностей, чтобы не превышать лимит токенов
     _BATCH_SIZE = 5
@@ -121,6 +122,7 @@ def _resolve_with_web_search(
                 response = client.messages.create(
                     model="claude-sonnet-4-5-20250929",
                     max_tokens=1000,
+                    timeout=_API_TIMEOUT,
                     tools=[{"name": "web_search", "type": "web_search_20250305"}],
                     messages=[{"role": "user", "content": prompt}],
                 )
